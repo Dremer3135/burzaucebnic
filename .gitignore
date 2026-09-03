@@ -1,0 +1,20 @@
+# PocketBase
+pocketbase
+pocketbase.exe
+pb_data/
+
+# Dependencies & Build
+node_modules/
+.svelte-kit/
+build/
+.output/
+
+# Environment variables
+.env
+.env.*
+!.env.example
+!.env.test
+
+# OS & System
+.DS_Store
+Thumbs.db
