@@ -6,6 +6,7 @@
 
 	let email = $state('');
 	let password = $state('');
+	let passwordConfirm = $state('');
 	let isRegister = $state(false);
 	let name = $state('');
 	let errorMessage = $state('');
@@ -14,22 +15,43 @@
 	async function handlePasswordAuth(e: SubmitEvent) {
 		e.preventDefault();
 		errorMessage = '';
+
+		if (isRegister) {
+			if (password.length < 8) {
+				errorMessage = 'Heslo musí mít alespoň 8 znaků.';
+				return;
+			}
+			if (password !== passwordConfirm) {
+				errorMessage = 'Hesla se neshodují.';
+				return;
+			}
+		}
+
 		isSubmitting = true;
 		try {
 			if (isRegister) {
 				const { pb } = await import('$lib/pocketbase');
 				await pb.collection('users').create({
-					email,
+					email: email.trim(),
 					password,
-					passwordConfirm: password,
-					name
+					passwordConfirm: passwordConfirm,
+					name: name.trim()
 				});
 			}
-			await auth.loginWithPassword(email, password);
+			await auth.loginWithPassword(email.trim(), password);
 			onsuccess?.();
 		} catch (err: any) {
 			console.error(err);
-			errorMessage = err?.message || 'Chyba při přihlášení. Zkontrolujte údaje.';
+			const errData = err?.response?.data || err?.data;
+			if (errData?.password?.message) {
+				errorMessage = 'Heslo musí mít alespoň 8 znaků.';
+			} else if (errData?.email?.message) {
+				errorMessage = 'Tento e-mail již existuje nebo je neplatný.';
+			} else if (errData?.passwordConfirm?.message) {
+				errorMessage = 'Hesla se neshodují.';
+			} else {
+				errorMessage = err?.message || 'Chyba při zpracování. Zkontrolujte zadané údaje.';
+			}
 		} finally {
 			isSubmitting = false;
 		}
@@ -65,30 +87,26 @@
 	}
 </script>
 
-<div class="bg-slate-800/95 border border-slate-700/80 rounded-2xl p-6 shadow-2xl max-w-sm w-full backdrop-blur">
+<div class="bg-white border-2 border-black p-6 max-w-sm w-full text-black">
+	<!-- Header -->
 	<div class="text-center mb-6">
-		<div class="inline-flex p-3 bg-emerald-500/10 text-emerald-400 rounded-2xl mb-3 border border-emerald-500/20">
-			<LogIn class="w-8 h-8" />
-		</div>
-		<h2 class="text-xl font-bold text-white tracking-tight">
-			{isRegister ? 'Vytvořit účet' : 'Přihlášení do Burzy'}
+		<h2 class="text-2xl font-black uppercase tracking-tight text-black">
+			{isRegister ? 'NOVÝ ÚČET' : 'PŘIHLÁŠENÍ'}
 		</h2>
-		<p class="text-xs text-slate-400 mt-1">
-			Pro nákup i prodej učebnic se prosím přihlaste
-		</p>
 	</div>
 
 	{#if errorMessage}
-		<div class="mb-4 p-3 bg-rose-500/10 border border-rose-500/30 text-rose-300 text-xs rounded-xl">
+		<div class="mb-4 p-3 bg-red-50 border-2 border-red-600 text-red-700 text-xs font-bold">
 			{errorMessage}
 		</div>
 	{/if}
 
-	<!-- Google OAuth button -->
+	<!-- Google Button -->
 	<button
+		type="button"
 		onclick={handleGoogleLogin}
 		disabled={isSubmitting}
-		class="w-full flex items-center justify-center gap-3 py-2.5 px-4 rounded-xl bg-white text-slate-800 font-medium hover:bg-slate-100 transition-colors shadow-sm disabled:opacity-50 text-sm mb-4 cursor-pointer"
+		class="w-full flex items-center justify-center gap-2 py-3 px-4 bg-white text-black font-black text-xs uppercase border-2 border-black hover:bg-neutral-100 transition-colors disabled:opacity-50 mb-4 cursor-pointer"
 	>
 		<svg class="w-4 h-4" viewBox="0 0 24 24">
 			<path
@@ -108,111 +126,117 @@
 				d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.34 0 3.26 2.64 1.25 6.58l4.03 3.15c.95-2.83 3.6-4.98 6.72-4.98z"
 			/>
 		</svg>
-		<span>Přihlásit se přes Google</span>
+		<span>PŘIHLÁSIT PŘES GOOGLE</span>
 	</button>
 
 	<div class="relative flex py-2 items-center mb-4">
-		<div class="flex-grow border-t border-slate-700"></div>
-		<span class="flex-shrink mx-3 text-xs text-slate-500 uppercase tracking-wider font-semibold">nebo emailem</span>
-		<div class="flex-grow border-t border-slate-700"></div>
+		<div class="flex-grow border-t-2 border-black"></div>
+		<span class="flex-shrink mx-3 text-[11px] text-black uppercase font-black tracking-wider">NEBO</span>
+		<div class="flex-grow border-t-2 border-black"></div>
 	</div>
 
-	<!-- Email / Password form -->
+	<!-- Email / Password Form -->
 	<form onsubmit={handlePasswordAuth} class="space-y-3">
 		{#if isRegister}
 			<div>
-				<label for="login-name" class="block text-xs font-medium text-slate-300 mb-1">Jméno</label>
-				<div class="relative">
-					<User class="w-4 h-4 text-slate-400 absolute left-3 top-3" />
-					<input
-						id="login-name"
-						type="text"
-						bind:value={name}
-						required
-						placeholder="Jan Novák"
-						class="w-full bg-slate-900 border border-slate-700 rounded-xl pl-9 pr-3 py-2 text-sm text-white focus:outline-none focus:border-emerald-500 transition-colors"
-					/>
-				</div>
+				<label for="login-name" class="block text-xs font-black uppercase text-black mb-1">Jméno</label>
+				<input
+					id="login-name"
+					type="text"
+					bind:value={name}
+					required
+					placeholder="Jan Novák"
+					class="w-full bg-white border-2 border-black px-3 py-2.5 text-sm text-black font-semibold focus:outline-none focus:bg-neutral-50"
+				/>
 			</div>
 		{/if}
 
 		<div>
-			<label for="login-email" class="block text-xs font-medium text-slate-300 mb-1">E-mail</label>
-			<div class="relative">
-				<Mail class="w-4 h-4 text-slate-400 absolute left-3 top-3" />
-				<input
-					id="login-email"
-					type="email"
-					bind:value={email}
-					required
-					placeholder="student@skola.cz"
-					class="w-full bg-slate-900 border border-slate-700 rounded-xl pl-9 pr-3 py-2 text-sm text-white focus:outline-none focus:border-emerald-500 transition-colors"
-				/>
-			</div>
+			<label for="login-email" class="block text-xs font-black uppercase text-black mb-1">E-mail</label>
+			<input
+				id="login-email"
+				type="email"
+				bind:value={email}
+				required
+				placeholder="student@skola.cz"
+				class="w-full bg-white border-2 border-black px-3 py-2.5 text-sm text-black font-semibold focus:outline-none focus:bg-neutral-50"
+			/>
 		</div>
 
 		<div>
-			<label for="login-password" class="block text-xs font-medium text-slate-300 mb-1">Heslo</label>
-			<div class="relative">
-				<Key class="w-4 h-4 text-slate-400 absolute left-3 top-3" />
+			<label for="login-password" class="block text-xs font-black uppercase text-black mb-1">Heslo</label>
+			<input
+				id="login-password"
+				type="password"
+				bind:value={password}
+				required
+				minlength="8"
+				placeholder="Minimálně 8 znaků"
+				class="w-full bg-white border-2 border-black px-3 py-2.5 text-sm text-black font-semibold focus:outline-none focus:bg-neutral-50"
+			/>
+		</div>
+
+		{#if isRegister}
+			<div>
+				<label for="login-password-confirm" class="block text-xs font-black uppercase text-black mb-1">Potvrzení hesla</label>
 				<input
-					id="login-password"
+					id="login-password-confirm"
 					type="password"
-					bind:value={password}
+					bind:value={passwordConfirm}
 					required
-					placeholder="••••••••"
-					class="w-full bg-slate-900 border border-slate-700 rounded-xl pl-9 pr-3 py-2 text-sm text-white focus:outline-none focus:border-emerald-500 transition-colors"
+					minlength="8"
+					placeholder="Zadejte heslo znovu"
+					class="w-full bg-white border-2 border-black px-3 py-2.5 text-sm text-black font-semibold focus:outline-none focus:bg-neutral-50"
 				/>
 			</div>
-		</div>
+		{/if}
 
 		<button
 			type="submit"
 			disabled={isSubmitting}
-			class="w-full py-2.5 px-4 rounded-xl bg-emerald-600 text-white font-medium hover:bg-emerald-500 transition-colors shadow-sm disabled:opacity-50 text-sm cursor-pointer"
+			class="w-full py-3.5 px-4 bg-black text-white font-black text-sm uppercase tracking-wider border-2 border-black hover:bg-neutral-800 active:bg-neutral-900 transition-colors disabled:opacity-50 cursor-pointer"
 		>
-			{isSubmitting ? 'Zpracovávám...' : isRegister ? 'Zaregistrovat se' : 'Přihlásit se'}
+			{isSubmitting ? 'ČEKEJTE...' : isRegister ? 'ZAREGISTROVAT SE' : 'PŘIHLÁSIT SE'}
 		</button>
 	</form>
 
+	<!-- Toggle Login / Register -->
 	<div class="mt-4 text-center">
 		<button
+			type="button"
 			onclick={() => {
 				isRegister = !isRegister;
 				errorMessage = '';
 			}}
-			class="text-xs text-slate-400 hover:text-emerald-400 transition-colors cursor-pointer"
+			class="text-xs font-black uppercase underline hover:no-underline cursor-pointer"
 		>
-			{isRegister ? 'Máte již účet? Přihlaste se' : 'Nemáte účet? Zaregistrujte se'}
+			{isRegister ? 'MÁTE ÚČET? PŘIHLÁSIT SE' : 'NEMÁTE ÚČET? VYTVOŘIT'}
 		</button>
 	</div>
 
-	<!-- Quick Dev Accounts for Mobile Testing -->
-	<div class="mt-6 pt-4 border-t border-slate-700/60">
-		<p class="text-[11px] text-slate-400 font-medium mb-2 text-center uppercase tracking-wider">
-			Rychlé testovací účty:
-		</p>
-		<div class="grid grid-cols-3 gap-1.5 text-xs">
+	<!-- Quick Dev Accounts -->
+	<div class="mt-6 pt-4 border-t-2 border-black">
+		<div class="grid grid-cols-3 gap-2">
 			<button
 				type="button"
 				onclick={() => quickLogin('seller@burza.cz')}
-				class="py-1.5 px-2 bg-slate-700/50 hover:bg-emerald-600/30 hover:border-emerald-500/50 border border-slate-600 rounded-lg text-slate-200 transition-colors text-center cursor-pointer truncate"
+				class="py-2 px-1 bg-neutral-100 hover:bg-black hover:text-white border-2 border-black text-black font-black text-xs uppercase tracking-tight transition-colors text-center cursor-pointer truncate"
 			>
-				Prodejce
+				PRODEJCE
 			</button>
 			<button
 				type="button"
 				onclick={() => quickLogin('buyer@burza.cz')}
-				class="py-1.5 px-2 bg-slate-700/50 hover:bg-emerald-600/30 hover:border-emerald-500/50 border border-slate-600 rounded-lg text-slate-200 transition-colors text-center cursor-pointer truncate"
+				class="py-2 px-1 bg-neutral-100 hover:bg-black hover:text-white border-2 border-black text-black font-black text-xs uppercase tracking-tight transition-colors text-center cursor-pointer truncate"
 			>
-				Kupující
+				KUPUJÍCÍ
 			</button>
 			<button
 				type="button"
 				onclick={() => quickLogin('cashier@burza.cz')}
-				class="py-1.5 px-2 bg-slate-700/50 hover:bg-amber-600/30 hover:border-amber-500/50 border border-slate-600 rounded-lg text-amber-300 transition-colors text-center cursor-pointer truncate"
+				class="py-2 px-1 bg-neutral-100 hover:bg-black hover:text-white border-2 border-black text-black font-black text-xs uppercase tracking-tight transition-colors text-center cursor-pointer truncate"
 			>
-				Pokladní
+				POKLADNÍ
 			</button>
 		</div>
 	</div>

@@ -2,7 +2,7 @@
 	import { goto } from '$app/navigation';
 	import { auth, eventStore } from '$lib/stores.svelte';
 	import LoginModal from '$lib/components/LoginModal.svelte';
-	import { Calendar, ShoppingBag, Tag, Clock, ArrowRight, ShieldCheck } from '@lucide/svelte';
+	import { ShoppingBag, Tag, Clock, ShieldCheck } from '@lucide/svelte';
 
 	$effect(() => {
 		if (auth.user && !eventStore.isLoading) {
@@ -26,75 +26,77 @@
 	}
 </script>
 
-<div class="flex-1 flex flex-col items-center justify-center p-4">
+<div class="flex-1 flex flex-col items-center justify-center p-4 bg-white text-black">
 	{#if !auth.user}
 		<div class="w-full flex justify-center py-6">
 			<LoginModal />
 		</div>
 	{:else}
-		<div class="max-w-md w-full bg-slate-800/80 border border-slate-700/80 rounded-2xl p-6 shadow-xl text-center backdrop-blur">
-			<div class="inline-flex p-3 bg-amber-500/10 text-amber-400 rounded-2xl mb-4 border border-amber-500/20">
+		<div class="max-w-md w-full bg-white border-2 border-black p-6 text-center shadow-none">
+			<div class="inline-flex p-3 bg-neutral-100 text-black border-2 border-black mb-4">
 				<Clock class="w-8 h-8" />
 			</div>
 
-			<h1 class="text-2xl font-bold text-white mb-2">Burza je momentálně uzavřena</h1>
+			<h1 class="text-2xl font-black uppercase tracking-tight text-black mb-2">
+				Burza je momentálně uzavřena
+			</h1>
 
 			{#if eventStore.event}
-				<p class="text-sm text-slate-300 mb-6">
-					Akce <strong class="text-emerald-400">{eventStore.event.name}</strong> právě neprobíhá.
+				<p class="text-sm font-semibold text-neutral-700 mb-6">
+					Akce <strong class="text-black uppercase font-black">{eventStore.event.name}</strong> právě neprobíhá.
 				</p>
 
-				<div class="bg-slate-900/60 rounded-xl p-4 mb-6 text-left text-xs space-y-2.5 border border-slate-800">
-					<div class="flex items-center justify-between">
-						<span class="text-slate-400 flex items-center gap-1.5">
-							<Tag class="w-3.5 h-3.5 text-emerald-400" />
-							Příjem učebnic do prodeje:
+				<div class="bg-neutral-50 border-2 border-black p-4 mb-6 text-left text-xs space-y-3">
+					<div class="flex items-center justify-between gap-2">
+						<span class="font-bold text-neutral-600 flex items-center gap-1.5 uppercase">
+							<Tag class="w-4 h-4 text-black" />
+							Příjem do prodeje:
 						</span>
-						<span class="font-medium text-slate-200">
+						<span class="font-black text-black">
 							{formatDate(eventStore.event.sellStart)} – {formatDate(eventStore.event.sellEnd)}
 						</span>
 					</div>
-					<div class="flex items-center justify-between">
-						<span class="text-slate-400 flex items-center gap-1.5">
-							<ShoppingBag class="w-3.5 h-3.5 text-blue-400" />
+					<div class="flex items-center justify-between gap-2 border-t border-neutral-300 pt-2">
+						<span class="font-bold text-neutral-600 flex items-center gap-1.5 uppercase">
+							<ShoppingBag class="w-4 h-4 text-black" />
 							Nákup učebnic:
 						</span>
-						<span class="font-medium text-slate-200">
+						<span class="font-black text-black">
 							{formatDate(eventStore.event.buyStart)} – {formatDate(eventStore.event.buyEnd)}
 						</span>
 					</div>
 				</div>
 			{:else}
-				<p class="text-sm text-slate-400 mb-6">
+				<p class="text-sm font-bold text-neutral-500 mb-6 uppercase">
 					Momentálně není naplánována žádná aktivní burza učebnic.
 				</p>
 			{/if}
 
-			<div class="space-y-2">
-				<p class="text-xs text-slate-400 mb-2">Můžete přejít přímo do jednotlivých sekcí:</p>
+			<div class="space-y-3">
+				<p class="text-xs font-black uppercase tracking-wider text-neutral-500">Přejít do sekce:</p>
 				<div class="grid grid-cols-2 gap-2">
 					<a
 						href="/sell"
-						class="flex items-center justify-center gap-2 py-2.5 px-3 rounded-xl bg-slate-700/60 hover:bg-slate-700 text-slate-200 text-xs font-medium border border-slate-600/60 transition-colors"
+						class="flex items-center justify-center gap-2 py-3 px-3 bg-black text-white font-black text-xs uppercase tracking-wider hover:bg-neutral-800 transition-colors border-2 border-black"
 					>
-						<Tag class="w-4 h-4 text-emerald-400" />
-						Moje knihy k prodeji
+						<Tag class="w-4 h-4 text-white" />
+						PRODEJ
 					</a>
 					<a
 						href="/buy"
-						class="flex items-center justify-center gap-2 py-2.5 px-3 rounded-xl bg-slate-700/60 hover:bg-slate-700 text-slate-200 text-xs font-medium border border-slate-600/60 transition-colors"
+						class="flex items-center justify-center gap-2 py-3 px-3 bg-black text-white font-black text-xs uppercase tracking-wider hover:bg-neutral-800 transition-colors border-2 border-black"
 					>
-						<ShoppingBag class="w-4 h-4 text-blue-400" />
-						Můj nákupní košík
+						<ShoppingBag class="w-4 h-4 text-white" />
+						KOŠÍK
 					</a>
 				</div>
 				{#if auth.isCashier}
 					<a
 						href="/cashier"
-						class="w-full flex items-center justify-center gap-2 py-2.5 px-3 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 text-xs font-medium border border-amber-500/40 transition-colors mt-2"
+						class="w-full flex items-center justify-center gap-2 py-3 px-3 bg-neutral-100 hover:bg-neutral-200 text-black font-black text-xs uppercase tracking-wider border-2 border-black transition-colors mt-2"
 					>
-						<ShieldCheck class="w-4 h-4" />
-						Přejít do pokladny
+						<ShieldCheck class="w-4 h-4 text-black" />
+						POKLADNA
 					</a>
 				{/if}
 			</div>

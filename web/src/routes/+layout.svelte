@@ -6,9 +6,9 @@
 	let { children } = $props();
 </script>
 
-<div class="min-h-screen bg-slate-900 text-slate-100 flex flex-col antialiased">
+<div class="min-h-screen bg-white text-black flex flex-col antialiased selection:bg-black selection:text-white">
 	<Header />
-	<main class="flex-1 flex flex-col">
+	<main class="flex-1 flex flex-col w-full">
 		{@render children()}
 	</main>
 </div>

@@ -1,4 +1,4 @@
-import { readBarcodes, type Position } from 'zxing-wasm/reader';
+import { readBarcodes, type Position, type ReaderOptions } from 'zxing-wasm/reader';
 
 export interface ScanMatch {
 	text: string;
@@ -17,6 +17,25 @@ export interface VideoTransform {
 	offsetX: number;
 	offsetY: number;
 }
+
+// Exact camera constraints proven in strelavlna3
+export const CAMERA_CONSTRAINTS: MediaStreamConstraints = {
+	video: {
+		facingMode: 'environment',
+		width: { ideal: 1920 },
+		height: { ideal: 1080 },
+		// @ts-ignore
+		advanced: [{ focusMode: 'continuous' }]
+	},
+	audio: false
+};
+
+// Exact scan options proven in strelavlna3
+export const SCAN_OPTIONS: ReaderOptions = {
+	formats: ['DataMatrix', 'QRCode'],
+	tryHarder: true, // Crucial for rotation/tilt
+	maxNumberOfSymbols: 1
+};
 
 export function getVideoTransform(
 	videoW: number,
@@ -39,43 +58,26 @@ export async function scanFrameForDataMatrix(
 ): Promise<ScanMatch | null> {
 	if (!video.videoWidth || !video.videoHeight) return null;
 
-	// Scale down large frames (e.g. 1080p) to max 720px for rapid WASM decoding without mobile frame drop
-	const maxDim = 720;
-	const originalW = video.videoWidth;
-	const originalH = video.videoHeight;
-	const scale = Math.min(1, maxDim / Math.max(originalW, originalH));
+	const width = video.videoWidth;
+	const height = video.videoHeight;
 
-	const targetW = Math.round(originalW * scale);
-	const targetH = Math.round(originalH * scale);
-
-	if (canvas.width !== targetW || canvas.height !== targetH) {
-		canvas.width = targetW;
-		canvas.height = targetH;
+	if (canvas.width !== width || canvas.height !== height) {
+		canvas.width = width;
+		canvas.height = height;
 	}
 
 	const ctx = canvas.getContext('2d', { willReadFrequently: true });
 	if (!ctx) return null;
 
-	ctx.drawImage(video, 0, 0, targetW, targetH);
-	const imageData = ctx.getImageData(0, 0, targetW, targetH);
+	ctx.drawImage(video, 0, 0, width, height);
+	const imageData = ctx.getImageData(0, 0, width, height);
 
 	try {
-		const results = await readBarcodes(imageData, {
-			formats: ['DataMatrix'],
-			tryHarder: false,
-			maxNumberOfSymbols: 1
-		});
+		const results = await readBarcodes(imageData, SCAN_OPTIONS);
 
 		if (results && results.length > 0) {
 			const res = results[0];
-			// Map coordinates back to original video dimensions
-			const invScale = 1 / scale;
-			const pos: Position = {
-				topLeft: { x: res.position.topLeft.x * invScale, y: res.position.topLeft.y * invScale },
-				topRight: { x: res.position.topRight.x * invScale, y: res.position.topRight.y * invScale },
-				bottomRight: { x: res.position.bottomRight.x * invScale, y: res.position.bottomRight.y * invScale },
-				bottomLeft: { x: res.position.bottomLeft.x * invScale, y: res.position.bottomLeft.y * invScale }
-			};
+			const pos = res.position;
 
 			const xs = [pos.topLeft.x, pos.topRight.x, pos.bottomRight.x, pos.bottomLeft.x];
 			const ys = [pos.topLeft.y, pos.topRight.y, pos.bottomRight.y, pos.bottomLeft.y];
@@ -141,16 +143,16 @@ export function drawBoundingBox(
 	ctx.fill();
 	ctx.stroke();
 
-	// Draw corner dots
+	// Draw sharp corner squares for minimalist sharp design
 	const points = [pos.topLeft, pos.topRight, pos.bottomRight, pos.bottomLeft];
 	ctx.fillStyle = '#ffffff';
 	for (const p of points) {
-		ctx.beginPath();
-		ctx.arc(p.x * scaleX + offsetX, p.y * scaleY + offsetY, 5, 0, Math.PI * 2);
-		ctx.fill();
+		const px = p.x * scaleX + offsetX;
+		const py = p.y * scaleY + offsetY;
+		ctx.fillRect(px - 4, py - 4, 8, 8);
 		ctx.strokeStyle = color;
 		ctx.lineWidth = 2;
-		ctx.stroke();
+		ctx.strokeRect(px - 4, py - 4, 8, 8);
 	}
 	ctx.restore();
 }

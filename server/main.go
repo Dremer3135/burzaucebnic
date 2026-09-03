@@ -16,14 +16,12 @@ import (
 	"sync"
 	"time"
 
-	"github.com/labstack/echo/v5"
 	"github.com/pocketbase/dbx"
 	"github.com/pocketbase/pocketbase"
 	"github.com/pocketbase/pocketbase/apis"
 	"github.com/pocketbase/pocketbase/core"
-	"github.com/pocketbase/pocketbase/daos"
-	"github.com/pocketbase/pocketbase/models"
-	"github.com/pocketbase/pocketbase/models/schema"
+	"github.com/pocketbase/pocketbase/tools/filesystem"
+	"github.com/pocketbase/pocketbase/tools/router"
 	"github.com/pocketbase/pocketbase/tools/types"
 )
 
@@ -33,44 +31,44 @@ func main() {
 	app := pocketbase.New()
 
 	// 1. Hook: Duplicate Data Matrix code validation before creating a book
-	app.OnRecordBeforeCreateRequest("books").Add(func(e *core.RecordCreateEvent) error {
+	app.OnRecordCreate("books").BindFunc(func(e *core.RecordEvent) error {
 		code := strings.TrimSpace(e.Record.GetString("code"))
 		if code == "" {
-			return echo.NewHTTPError(http.StatusBadRequest, "Kód Data Matrix je povinný.")
+			return router.NewBadRequestError("Kód Data Matrix je povinný.", nil)
 		}
-		existing, _ := app.Dao().FindFirstRecordByData("books", "code", code)
+		existing, _ := e.App.FindFirstRecordByData("books", "code", code)
 		if existing != nil {
-			return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("Kód '%s' je již zaregistrován.", code))
+			return router.NewBadRequestError(fmt.Sprintf("Kód '%s' je již zaregistrován.", code), nil)
 		}
-		return nil
+		return e.Next()
 	})
 
 	// 2. Hook: FFmpeg compression of book photo after upload
-	app.OnRecordAfterCreateRequest("books").Add(func(e *core.RecordCreateEvent) error {
+	app.OnRecordAfterCreateSuccess("books").BindFunc(func(e *core.RecordEvent) error {
 		photoName := e.Record.GetString("photo")
 		if photoName == "" {
-			return nil
+			return e.Next()
 		}
-		filePath := filepath.Join(app.DataDir(), "storage", e.Record.BaseFilesPath(), photoName)
+		filePath := filepath.Join(e.App.DataDir(), "storage", e.Record.BaseFilesPath(), photoName)
 		go compressImageWithFFmpeg(filePath)
-		return nil
+		return e.Next()
 	})
 
 	// 3. Schema & Seed setup on startup, custom API routes & reaper
-	app.OnBeforeServe().Add(func(e *core.ServeEvent) error {
-		if err := ensureSchema(app); err != nil {
+	app.OnServe().BindFunc(func(e *core.ServeEvent) error {
+		if err := ensureSchema(e.App); err != nil {
 			log.Printf("[SCHEMA ERROR] %v", err)
 			return err
 		}
 
-		if err := seedInitialData(app); err != nil {
+		if err := seedInitialData(e.App); err != nil {
 			log.Printf("[SEED ERROR] %v", err)
 		}
 
-		registerApiEndpoints(app, e)
-		startCheckoutReaper(app)
+		registerApiEndpoints(e)
+		startCheckoutReaper(e.App)
 
-		return nil
+		return e.Next()
 	})
 
 	if err := app.Start(); err != nil {
@@ -80,7 +78,6 @@ func main() {
 
 // compressImageWithFFmpeg scales image down to 720p width maintaining aspect ratio and compresses JPEG
 func compressImageWithFFmpeg(filePath string) {
-	// Wait a moment for file to be flushed to disk
 	time.Sleep(100 * time.Millisecond)
 
 	if _, err := os.Stat(filePath); err != nil {
@@ -88,14 +85,12 @@ func compressImageWithFFmpeg(filePath string) {
 	}
 
 	tmpOutput := filePath + ".opt.jpg"
-	// Scale to max 720 width (maintain aspect ratio) and use jpeg compression
 	cmd := exec.Command("ffmpeg", "-y", "-i", filePath, "-vf", "scale='min(720,iw)':-2", "-q:v", "3", tmpOutput)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		log.Printf("[FFMPEG COMPRESSION FAILED] %v: %s", err, string(out))
 		return
 	}
 
-	// Replace original with optimized version
 	if err := os.Rename(tmpOutput, filePath); err != nil {
 		log.Printf("[FFMPEG RENAME FAILED] %v", err)
 	} else {
@@ -104,151 +99,142 @@ func compressImageWithFFmpeg(filePath string) {
 }
 
 // ensureSchema initializes collections if they do not exist
-func ensureSchema(app *pocketbase.PocketBase) error {
-	dao := app.Dao()
+func ensureSchema(app core.App) error {
+	// 0. Fetch users collection
+	usersColl, err := app.FindCollectionByNameOrId("users")
+	if err != nil {
+		return fmt.Errorf("finding users collection: %w", err)
+	}
 
 	// 1. Events collection
-	eventsColl, _ := dao.FindCollectionByNameOrId("events")
+	eventsColl, _ := app.FindCollectionByNameOrId("events")
 	if eventsColl == nil {
-		eventsColl = &models.Collection{
-			Name:       "events",
-			Type:       models.CollectionTypeBase,
-			ListRule:   types.Pointer(""), // Public
-			ViewRule:   types.Pointer(""), // Public
-			CreateRule: types.Pointer("@request.auth.isCashier = true"),
-			UpdateRule: types.Pointer("@request.auth.isCashier = true"),
-			DeleteRule: types.Pointer("@request.auth.isCashier = true"),
-			Schema: schema.NewSchema(
-				&schema.SchemaField{Name: "name", Type: schema.FieldTypeText, Required: true},
-				&schema.SchemaField{Name: "active", Type: schema.FieldTypeBool},
-				&schema.SchemaField{Name: "sellStart", Type: schema.FieldTypeDate},
-				&schema.SchemaField{Name: "sellEnd", Type: schema.FieldTypeDate},
-				&schema.SchemaField{Name: "buyStart", Type: schema.FieldTypeDate},
-				&schema.SchemaField{Name: "buyEnd", Type: schema.FieldTypeDate},
-				&schema.SchemaField{Name: "bankAccount", Type: schema.FieldTypeText},
-				&schema.SchemaField{Name: "iban", Type: schema.FieldTypeText},
-				&schema.SchemaField{Name: "currency", Type: schema.FieldTypeText},
-			),
-		}
-		if err := dao.SaveCollection(eventsColl); err != nil {
+		eventsColl = core.NewBaseCollection("events")
+		eventsColl.ListRule = types.Pointer("")
+		eventsColl.ViewRule = types.Pointer("")
+		eventsColl.CreateRule = types.Pointer("@request.auth.isCashier = true")
+		eventsColl.UpdateRule = types.Pointer("@request.auth.isCashier = true")
+		eventsColl.DeleteRule = types.Pointer("@request.auth.isCashier = true")
+		eventsColl.Fields.Add(
+			&core.TextField{Name: "name", Required: true},
+			&core.BoolField{Name: "active"},
+			&core.DateField{Name: "sellStart"},
+			&core.DateField{Name: "sellEnd"},
+			&core.DateField{Name: "buyStart"},
+			&core.DateField{Name: "buyEnd"},
+			&core.TextField{Name: "bankAccount"},
+			&core.TextField{Name: "iban"},
+			&core.TextField{Name: "currency"},
+		)
+		if err := app.Save(eventsColl); err != nil {
 			return fmt.Errorf("creating events collection: %w", err)
 		}
 	}
 
 	// 2. Books collection
-	booksColl, _ := dao.FindCollectionByNameOrId("books")
+	booksColl, _ := app.FindCollectionByNameOrId("books")
 	if booksColl == nil {
-		maxSelectOne := 1
-		booksColl = &models.Collection{
-			Name:       "books",
-			Type:       models.CollectionTypeBase,
-			ListRule:   types.Pointer("@request.auth.id != ''"),
-			ViewRule:   types.Pointer("@request.auth.id != ''"),
-			CreateRule: types.Pointer("@request.auth.id != '' && @request.auth.id = @request.data.seller"),
-			UpdateRule: types.Pointer("@request.auth.id != '' && (@request.auth.id = seller || @request.auth.isCashier = true)"),
-			DeleteRule: types.Pointer("@request.auth.id != '' && @request.auth.id = seller && status = 'available'"),
-			Schema: schema.NewSchema(
-				&schema.SchemaField{Name: "code", Type: schema.FieldTypeText, Required: true},
-				&schema.SchemaField{
-					Name: "seller", Type: schema.FieldTypeRelation, Required: true,
-					Options: &schema.RelationOptions{CollectionId: "users", MaxSelect: &maxSelectOne},
-				},
-				&schema.SchemaField{
-					Name: "buyer", Type: schema.FieldTypeRelation,
-					Options: &schema.RelationOptions{CollectionId: "users", MaxSelect: &maxSelectOne},
-				},
-				&schema.SchemaField{
-					Name: "event", Type: schema.FieldTypeRelation, Required: true,
-					Options: &schema.RelationOptions{CollectionId: eventsColl.Id, MaxSelect: &maxSelectOne},
-				},
-				&schema.SchemaField{Name: "price", Type: schema.FieldTypeNumber, Required: true},
-				&schema.SchemaField{
-					Name: "photo", Type: schema.FieldTypeFile, Required: true,
-					Options: &schema.FileOptions{
-						MaxSelect: 1,
-						MaxSize:   10485760,
-						MimeTypes: []string{"image/jpeg", "image/png", "image/webp"},
-						Thumbs:    []string{"100x150"},
-					},
-				},
-				&schema.SchemaField{
-					Name: "status", Type: schema.FieldTypeSelect,
-					Options: &schema.SelectOptions{
-						Values:    []string{"available", "checkout", "bought"},
-						MaxSelect: 1,
-					},
-				},
-				&schema.SchemaField{Name: "checkoutExpiresAt", Type: schema.FieldTypeDate},
-			),
-			Indexes: types.JsonArray[string]{
-				"CREATE UNIQUE INDEX idx_books_code ON books (code)",
+		booksColl = core.NewBaseCollection("books")
+		booksColl.ListRule = types.Pointer("@request.auth.id != ''")
+		booksColl.ViewRule = types.Pointer("@request.auth.id != ''")
+		booksColl.CreateRule = types.Pointer("@request.auth.id != '' && @request.auth.id = @request.body.seller")
+		booksColl.UpdateRule = types.Pointer("@request.auth.id != '' && (@request.auth.id = seller || @request.auth.isCashier = true)")
+		booksColl.DeleteRule = types.Pointer("@request.auth.id != '' && @request.auth.id = seller && status = 'available'")
+		booksColl.Fields.Add(
+			&core.TextField{Name: "code", Required: true},
+			&core.RelationField{
+				Name: "seller", Required: true,
+				CollectionId: usersColl.Id, MaxSelect: 1,
 			},
+			&core.RelationField{
+				Name: "buyer",
+				CollectionId: usersColl.Id, MaxSelect: 1,
+			},
+			&core.RelationField{
+				Name: "event", Required: true,
+				CollectionId: eventsColl.Id, MaxSelect: 1,
+			},
+			&core.NumberField{Name: "price", Required: true},
+			&core.FileField{
+				Name: "photo", Required: true,
+				MaxSelect: 1,
+				MaxSize:   10485760,
+				MimeTypes: []string{"image/jpeg", "image/png", "image/webp"},
+				Thumbs:    []string{"100x150"},
+			},
+			&core.SelectField{
+				Name: "status",
+				Values:    []string{"available", "checkout", "bought"},
+				MaxSelect: 1,
+			},
+			&core.DateField{Name: "checkoutExpiresAt"},
+		)
+		booksColl.Indexes = types.JSONArray[string]{
+			"CREATE UNIQUE INDEX idx_books_code ON books (code)",
 		}
-		if err := dao.SaveCollection(booksColl); err != nil {
+		if err := app.Save(booksColl); err != nil {
 			return fmt.Errorf("creating books collection: %w", err)
 		}
 	}
 
 	// 3. Payments collection
-	paymentsColl, _ := dao.FindCollectionByNameOrId("payments")
+	paymentsColl, _ := app.FindCollectionByNameOrId("payments")
 	if paymentsColl == nil {
-		maxSelectOne := 1
-		paymentsColl = &models.Collection{
-			Name:       "payments",
-			Type:       models.CollectionTypeBase,
-			ListRule:   types.Pointer("@request.auth.isCashier = true || @request.auth.id = buyer"),
-			ViewRule:   types.Pointer("@request.auth.isCashier = true || @request.auth.id = buyer"),
-			CreateRule: types.Pointer("@request.auth.isCashier = true"),
-			UpdateRule: types.Pointer("@request.auth.isCashier = true"),
-			DeleteRule: types.Pointer("@request.auth.isCashier = true"),
-			Schema: schema.NewSchema(
-				&schema.SchemaField{Name: "variableSymbol", Type: schema.FieldTypeNumber, Required: true},
-				&schema.SchemaField{
-					Name: "buyer", Type: schema.FieldTypeRelation, Required: true,
-					Options: &schema.RelationOptions{CollectionId: "users", MaxSelect: &maxSelectOne},
-				},
-				&schema.SchemaField{
-					Name: "books", Type: schema.FieldTypeRelation, Required: true,
-					Options: &schema.RelationOptions{CollectionId: booksColl.Id},
-				},
-				&schema.SchemaField{Name: "totalAmount", Type: schema.FieldTypeNumber, Required: true},
-				&schema.SchemaField{
-					Name: "method", Type: schema.FieldTypeSelect, Required: true,
-					Options: &schema.SelectOptions{Values: []string{"qr", "cash"}, MaxSelect: 1},
-				},
-				&schema.SchemaField{
-					Name: "status", Type: schema.FieldTypeSelect,
-					Options: &schema.SelectOptions{Values: []string{"pending", "completed", "cancelled"}, MaxSelect: 1},
-				},
-				&schema.SchemaField{
-					Name: "cashier", Type: schema.FieldTypeRelation,
-					Options: &schema.RelationOptions{CollectionId: "users", MaxSelect: &maxSelectOne},
-				},
-			),
-		}
-		if err := dao.SaveCollection(paymentsColl); err != nil {
+		paymentsColl = core.NewBaseCollection("payments")
+		paymentsColl.ListRule = types.Pointer("@request.auth.isCashier = true || @request.auth.id = buyer")
+		paymentsColl.ViewRule = types.Pointer("@request.auth.isCashier = true || @request.auth.id = buyer")
+		paymentsColl.CreateRule = types.Pointer("@request.auth.isCashier = true")
+		paymentsColl.UpdateRule = types.Pointer("@request.auth.isCashier = true")
+		paymentsColl.DeleteRule = types.Pointer("@request.auth.isCashier = true")
+		paymentsColl.Fields.Add(
+			&core.NumberField{Name: "variableSymbol", Required: true},
+			&core.RelationField{
+				Name: "buyer", Required: true,
+				CollectionId: usersColl.Id, MaxSelect: 1,
+			},
+			&core.RelationField{
+				Name: "books", Required: true,
+				CollectionId: booksColl.Id, MaxSelect: 999,
+			},
+			&core.NumberField{Name: "totalAmount", Required: true},
+			&core.SelectField{
+				Name: "method", Required: true,
+				Values: []string{"qr", "cash"}, MaxSelect: 1,
+			},
+			&core.SelectField{
+				Name: "status",
+				Values: []string{"pending", "completed", "cancelled"}, MaxSelect: 1,
+			},
+			&core.RelationField{
+				Name: "cashier",
+				CollectionId: usersColl.Id, MaxSelect: 1,
+			},
+		)
+		if err := app.Save(paymentsColl); err != nil {
 			return fmt.Errorf("creating payments collection: %w", err)
 		}
 	}
 
-	// 4. Update users collection with isCashier, buy fields, and view/list rules for relations
-	usersColl, err := dao.FindCollectionByNameOrId("users")
-	if err == nil {
+	// 4. Update users collection with name, isCashier, buy fields, and view/list rules for relations
+	{
 		var changed bool
-		if usersColl.Schema.GetFieldByName("isCashier") == nil {
-			usersColl.Schema.AddField(&schema.SchemaField{
-				Name: "isCashier",
-				Type: schema.FieldTypeBool,
+		if usersColl.Fields.GetByName("name") == nil {
+			usersColl.Fields.Add(&core.TextField{
+				Name: "name",
 			})
 			changed = true
 		}
-		if usersColl.Schema.GetFieldByName("buy") == nil {
-			usersColl.Schema.AddField(&schema.SchemaField{
-				Name: "buy",
-				Type: schema.FieldTypeRelation,
-				Options: &schema.RelationOptions{
-					CollectionId: booksColl.Id,
-				},
+		if usersColl.Fields.GetByName("isCashier") == nil {
+			usersColl.Fields.Add(&core.BoolField{
+				Name: "isCashier",
+			})
+			changed = true
+		}
+		if usersColl.Fields.GetByName("buy") == nil {
+			usersColl.Fields.Add(&core.RelationField{
+				Name:         "buy",
+				CollectionId: booksColl.Id,
+				MaxSelect:    999,
 			})
 			changed = true
 		}
@@ -257,13 +243,16 @@ func ensureSchema(app *pocketbase.PocketBase) error {
 			usersColl.ListRule = types.Pointer("@request.auth.id != ''")
 			changed = true
 		}
+		if usersColl.CreateRule == nil || *usersColl.CreateRule != "" {
+			usersColl.CreateRule = types.Pointer("")
+			changed = true
+		}
 		if changed {
-			if err := dao.SaveCollection(usersColl); err != nil {
+			if err := app.Save(usersColl); err != nil {
 				return fmt.Errorf("updating users schema: %w", err)
 			}
 		}
 	}
-
 
 	return nil
 }
@@ -297,17 +286,32 @@ func generateDummyCoverBytes(title, author string, bg color.RGBA) ([]byte, strin
 }
 
 // seedInitialData creates test accounts, active event, and sample books
-func seedInitialData(app *pocketbase.PocketBase) error {
-	dao := app.Dao()
+func seedInitialData(app core.App) error {
+	// 0. Default Superuser / Admin
+	superuser, _ := app.FindAuthRecordByEmail(core.CollectionNameSuperusers, "ondrej@skrat.org")
+	if superuser == nil {
+		superuserColl, err := app.FindCollectionByNameOrId(core.CollectionNameSuperusers)
+		if err == nil && superuserColl != nil {
+			superuser = core.NewRecord(superuserColl)
+			superuser.SetEmail("ondrej@skrat.org")
+			superuser.SetPassword("burzajeNej67$")
+			superuser.SetVerified(true)
+			if err := app.Save(superuser); err != nil {
+				log.Printf("[SEED] Error creating superuser ondrej@skrat.org: %v", err)
+			} else {
+				log.Printf("[SEED] Created superuser admin ondrej@skrat.org")
+			}
+		}
+	}
 
 	// 1. Active Event
-	event, _ := dao.FindFirstRecordByData("events", "active", true)
+	event, _ := app.FindFirstRecordByData("events", "active", true)
 	if event == nil {
-		eventsColl, err := dao.FindCollectionByNameOrId("events")
+		eventsColl, err := app.FindCollectionByNameOrId("events")
 		if err != nil {
 			return err
 		}
-		event = models.NewRecord(eventsColl)
+		event = core.NewRecord(eventsColl)
 		event.Set("name", "Podzimní burza učebnic 2026")
 		event.Set("active", true)
 		event.Set("sellStart", time.Now().Add(-24*time.Hour).UTC().Format("2006-01-02 15:04:05.000Z"))
@@ -317,7 +321,7 @@ func seedInitialData(app *pocketbase.PocketBase) error {
 		event.Set("bankAccount", "2101234567/2010")
 		event.Set("iban", "CZ6520100000002101234567")
 		event.Set("currency", "CZK")
-		if err := dao.SaveRecord(event); err != nil {
+		if err := app.Save(event); err != nil {
 			log.Printf("[SEED] Failed to create event: %v", err)
 		} else {
 			log.Printf("[SEED] Created active event: %s", event.GetString("name"))
@@ -325,7 +329,7 @@ func seedInitialData(app *pocketbase.PocketBase) error {
 	}
 
 	// 2. Test Users
-	usersColl, err := dao.FindCollectionByNameOrId("users")
+	usersColl, err := app.FindCollectionByNameOrId("users")
 	if err != nil {
 		return err
 	}
@@ -344,18 +348,18 @@ func seedInitialData(app *pocketbase.PocketBase) error {
 		{email: "buyer@burza.cz", username: "buyer", name: "Kupující Petr", password: "heslo123", isCashier: false},
 	}
 
-	var sellerUser *models.Record
+	var sellerUser *core.Record
 	for _, u := range testUsers {
-		user, _ := dao.FindAuthRecordByEmail("users", u.email)
+		user, _ := app.FindAuthRecordByEmail("users", u.email)
 		if user == nil {
-			user = models.NewRecord(usersColl)
-			_ = user.SetUsername(u.username)
-			_ = user.SetEmail(u.email)
-			_ = user.SetPassword(u.password)
+			user = core.NewRecord(usersColl)
+			user.Set("username", u.username)
+			user.SetEmail(u.email)
+			user.SetPassword(u.password)
 			user.Set("name", u.name)
 			user.Set("isCashier", u.isCashier)
-			_ = user.SetVerified(true)
-			if err := dao.SaveRecord(user); err != nil {
+			user.SetVerified(true)
+			if err := app.Save(user); err != nil {
 				log.Printf("[SEED] Error creating user %s: %v", u.email, err)
 			} else {
 				log.Printf("[SEED] Created test user %s (isCashier: %v)", u.email, u.isCashier)
@@ -368,16 +372,15 @@ func seedInitialData(app *pocketbase.PocketBase) error {
 
 	// 3. Clean up any invalid placeholder books and seed real sample books
 	if sellerUser != nil && event != nil {
-		booksColl, err := dao.FindCollectionByNameOrId("books")
+		booksColl, err := app.FindCollectionByNameOrId("books")
 		if err == nil {
-			// Delete books with empty seller
-			emptyBooks, _ := dao.FindRecordsByExpr("books", dbx.HashExp{"seller": ""})
+			emptyBooks, _ := app.FindAllRecords("books", dbx.HashExp{"seller": ""})
 			for _, eb := range emptyBooks {
-				_ = dao.DeleteRecord(eb)
+				_ = app.Delete(eb)
 			}
 
 			var count int
-			_ = dao.DB().Select("count(*)").From("books").Row(&count)
+			_ = app.DB().Select("count(*)").From("books").Row(&count)
 			if count == 0 {
 				sampleBooks := []struct {
 					code  string
@@ -396,37 +399,20 @@ func seedInitialData(app *pocketbase.PocketBase) error {
 					if err != nil {
 						continue
 					}
-					book := models.NewRecord(booksColl)
+					book := core.NewRecord(booksColl)
 					book.Set("code", sb.code)
 					book.Set("seller", sellerUser.Id)
 					book.Set("event", event.Id)
 					book.Set("price", sb.price)
 					book.Set("status", "available")
-					book.Set("photo", fileName)
-					if err := dao.SaveRecord(book); err != nil {
+					file, err := filesystem.NewFileFromBytes(coverBytes, fileName)
+					if err == nil {
+						book.Set("photo", file)
+					}
+					if err := app.Save(book); err != nil {
 						log.Printf("[SEED] Error creating sample book %s: %v", sb.code, err)
 					} else {
-						// Write cover image to disk in storage directory
-						destDir := filepath.Join(app.DataDir(), "storage", book.BaseFilesPath())
-						_ = os.MkdirAll(destDir, 0755)
-						_ = os.WriteFile(filepath.Join(destDir, fileName), coverBytes, 0644)
-						attrsJSON := fmt.Sprintf(`{"user.cache_control":"","user.content_disposition":"inline","user.content_encoding":"","user.content_language":"","user.content_type":"image/jpeg","user.metadata":{"original-filename":"%s"},"md5":""}`, fileName)
-						_ = os.WriteFile(filepath.Join(destDir, fileName+".attrs"), []byte(attrsJSON), 0644)
 						log.Printf("[SEED] Created sample book %s (%s, %.0f Kč)", sb.code, sb.title, sb.price)
-					}
-				}
-			}
-
-			// Ensure all existing books in storage have .attrs so thumbnails can be served
-			allBooks, _ := dao.FindRecordsByExpr("books", dbx.NewExp("photo != ''"))
-			for _, b := range allBooks {
-				photo := b.GetString("photo")
-				if photo != "" {
-					dir := filepath.Join(app.DataDir(), "storage", b.BaseFilesPath())
-					attrsFile := filepath.Join(dir, photo+".attrs")
-					if _, err := os.Stat(attrsFile); os.IsNotExist(err) {
-						attrsJSON := fmt.Sprintf(`{"user.cache_control":"","user.content_disposition":"inline","user.content_encoding":"","user.content_language":"","user.content_type":"image/jpeg","user.metadata":{"original-filename":"%s"},"md5":""}`, photo)
-						_ = os.WriteFile(attrsFile, []byte(attrsJSON), 0644)
 					}
 				}
 			}
@@ -437,45 +423,45 @@ func seedInitialData(app *pocketbase.PocketBase) error {
 }
 
 // registerApiEndpoints registers custom API routes
-func registerApiEndpoints(app *pocketbase.PocketBase, e *core.ServeEvent) {
+func registerApiEndpoints(e *core.ServeEvent) {
 	// POST /api/checkout - Atomic book checkout reservation
-	e.Router.POST("/api/checkout", func(c echo.Context) error {
-		authRecord, _ := c.Get(apis.ContextAuthRecordKey).(*models.Record)
+	e.Router.POST("/api/checkout", func(c *core.RequestEvent) error {
+		authRecord := c.Auth
 		if authRecord == nil {
-			return echo.NewHTTPError(http.StatusUnauthorized, "Přihlášení je vyžadováno.")
+			return c.UnauthorizedError("Přihlášení je vyžadováno.", nil)
 		}
 
 		var req struct {
 			BookIds []string `json:"bookIds"`
 		}
-		if err := c.Bind(&req); err != nil || len(req.BookIds) == 0 {
-			return echo.NewHTTPError(http.StatusBadRequest, "Musíte uvést alespoň jednu knihu.")
+		if err := c.BindBody(&req); err != nil || len(req.BookIds) == 0 {
+			return c.BadRequestError("Musíte uvést alespoň jednu knihu.", nil)
 		}
 
 		var expiresAt string
-		err := app.Dao().RunInTransaction(func(txDao *daos.Dao) error {
+		err := c.App.RunInTransaction(func(txApp core.App) error {
 			now := time.Now().UTC()
 			expiresTime := now.Add(15 * time.Minute)
 			expiresAt = expiresTime.Format("2006-01-02 15:04:05.000Z")
 
 			for _, bookId := range req.BookIds {
-				book, err := txDao.FindRecordById("books", bookId)
+				book, err := txApp.FindRecordById("books", bookId)
 				if err != nil || book == nil {
-					return echo.NewHTTPError(http.StatusNotFound, fmt.Sprintf("Kniha s ID '%s' nebyla nalezena.", bookId))
+					return c.NotFoundError(fmt.Sprintf("Kniha s ID '%s' nebyla nalezena.", bookId), nil)
 				}
 
 				if book.GetString("status") != "available" {
-					return echo.NewHTTPError(http.StatusConflict, fmt.Sprintf("Kniha '%s' již není dostupná (stav: %s).", book.GetString("code"), book.GetString("status")))
+					return router.NewApiError(http.StatusConflict, fmt.Sprintf("Kniha '%s' již není dostupná (stav: %s).", book.GetString("code"), book.GetString("status")), nil)
 				}
 
 				if book.GetString("seller") == authRecord.Id {
-					return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("Nemůžete zakoupit svoji vlastní knihu (%s).", book.GetString("code")))
+					return c.BadRequestError(fmt.Sprintf("Nemůžete zakoupit svoji vlastní knihu (%s).", book.GetString("code")), nil)
 				}
 
 				book.Set("status", "checkout")
 				book.Set("buyer", authRecord.Id)
 				book.Set("checkoutExpiresAt", expiresAt)
-				if err := txDao.SaveRecord(book); err != nil {
+				if err := txApp.Save(book); err != nil {
 					return fmt.Errorf("chyba při ukládání knihy: %w", err)
 				}
 			}
@@ -494,7 +480,7 @@ func registerApiEndpoints(app *pocketbase.PocketBase, e *core.ServeEvent) {
 				updatedBuy = append(updatedBuy, b)
 			}
 			authRecord.Set("buy", updatedBuy)
-			if err := txDao.SaveRecord(authRecord); err != nil {
+			if err := txApp.Save(authRecord); err != nil {
 				return fmt.Errorf("chyba při aktualizaci košíku uživatele: %w", err)
 			}
 
@@ -502,10 +488,7 @@ func registerApiEndpoints(app *pocketbase.PocketBase, e *core.ServeEvent) {
 		})
 
 		if err != nil {
-			if httpErr, ok := err.(*echo.HTTPError); ok {
-				return httpErr
-			}
-			return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
+			return err
 		}
 
 		return c.JSON(http.StatusOK, map[string]any{
@@ -514,32 +497,32 @@ func registerApiEndpoints(app *pocketbase.PocketBase, e *core.ServeEvent) {
 			"expiresAt": expiresAt,
 			"count":     len(req.BookIds),
 		})
-	}, apis.ActivityLogger(app), apis.RequireRecordAuth("users"))
+	}).Bind(apis.RequireAuth("users"))
 
 	// POST /api/checkout/cancel - Cancel reservation of books
-	e.Router.POST("/api/checkout/cancel", func(c echo.Context) error {
-		authRecord, _ := c.Get(apis.ContextAuthRecordKey).(*models.Record)
+	e.Router.POST("/api/checkout/cancel", func(c *core.RequestEvent) error {
+		authRecord := c.Auth
 		if authRecord == nil {
-			return echo.NewHTTPError(http.StatusUnauthorized, "Přihlášení je vyžadováno.")
+			return c.UnauthorizedError("Přihlášení je vyžadováno.", nil)
 		}
 
 		var req struct {
 			BookIds []string `json:"bookIds"`
 		}
-		_ = c.Bind(&req)
+		_ = c.BindBody(&req)
 
-		err := app.Dao().RunInTransaction(func(txDao *daos.Dao) error {
-			var booksToCancel []*models.Record
+		err := c.App.RunInTransaction(func(txApp core.App) error {
+			var booksToCancel []*core.Record
 			if len(req.BookIds) > 0 {
 				for _, id := range req.BookIds {
-					b, err := txDao.FindRecordById("books", id)
+					b, err := txApp.FindRecordById("books", id)
 					if err == nil && b != nil && b.GetString("buyer") == authRecord.Id && b.GetString("status") == "checkout" {
 						booksToCancel = append(booksToCancel, b)
 					}
 				}
 			} else {
 				// Cancel all books reserved by this user
-				books, err := txDao.FindRecordsByExpr("books", dbx.HashExp{
+				books, err := txApp.FindAllRecords("books", dbx.HashExp{
 					"buyer":  authRecord.Id,
 					"status": "checkout",
 				})
@@ -550,21 +533,20 @@ func registerApiEndpoints(app *pocketbase.PocketBase, e *core.ServeEvent) {
 
 			for _, b := range booksToCancel {
 				// Cancel any pending payment associated with this book
-				pendingPayments, _ := txDao.FindRecordsByExpr("payments", dbx.And(
+				pendingPayments, _ := txApp.FindAllRecords("payments", dbx.And(
 					dbx.HashExp{"status": "pending"},
 					dbx.NewExp("books LIKE {:bId}", dbx.Params{"bId": "%" + b.Id + "%"}),
 				))
 				for _, pp := range pendingPayments {
 					pp.Set("status", "cancelled")
-					_ = txDao.SaveRecord(pp)
+					_ = txApp.Save(pp)
 				}
 
 				b.Set("status", "available")
 				b.Set("buyer", "")
 				b.Set("checkoutExpiresAt", "")
-				_ = txDao.SaveRecord(b)
+				_ = txApp.Save(b)
 			}
-
 
 			// Clean user buy relation
 			cancelIds := make(map[string]bool)
@@ -579,42 +561,42 @@ func registerApiEndpoints(app *pocketbase.PocketBase, e *core.ServeEvent) {
 				}
 			}
 			authRecord.Set("buy", newBuy)
-			_ = txDao.SaveRecord(authRecord)
+			_ = txApp.Save(authRecord)
 
 			return nil
 		})
 
 		if err != nil {
-			return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
+			return err
 		}
 
 		return c.JSON(http.StatusOK, map[string]any{"success": true})
-	}, apis.ActivityLogger(app), apis.RequireRecordAuth("users"))
+	}).Bind(apis.RequireAuth("users"))
 
 	// GET /api/cashier/buyer-cart - Cashier scans buyer Data Matrix and gets their checkout books
-	e.Router.GET("/api/cashier/buyer-cart", func(c echo.Context) error {
-		authRecord, _ := c.Get(apis.ContextAuthRecordKey).(*models.Record)
+	e.Router.GET("/api/cashier/buyer-cart", func(c *core.RequestEvent) error {
+		authRecord := c.Auth
 		if authRecord == nil || !authRecord.GetBool("isCashier") {
-			return echo.NewHTTPError(http.StatusForbidden, "Pouze pokladní má přístup k této funkci.")
+			return c.ForbiddenError("Pouze pokladní má přístup k této funkci.", nil)
 		}
 
-		buyerId := strings.TrimSpace(c.QueryParam("buyerId"))
+		buyerId := strings.TrimSpace(c.Request.URL.Query().Get("buyerId"))
 		if buyerId == "" {
-			return echo.NewHTTPError(http.StatusBadRequest, "Chybí buyerId.")
+			return c.BadRequestError("Chybí buyerId.", nil)
 		}
 
-		buyer, err := app.Dao().FindRecordById("users", buyerId)
+		buyer, err := c.App.FindRecordById("users", buyerId)
 		if err != nil || buyer == nil {
-			return echo.NewHTTPError(http.StatusNotFound, "Kupující s tímto kódem nebyl nalezen.")
+			return c.NotFoundError("Kupující s tímto kódem nebyl nalezen.", nil)
 		}
 
 		// Find all books currently in checkout for this buyer
-		books, err := app.Dao().FindRecordsByExpr("books", dbx.HashExp{
+		books, err := c.App.FindAllRecords("books", dbx.HashExp{
 			"buyer":  buyerId,
 			"status": "checkout",
 		})
 		if err != nil {
-			return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
+			return c.InternalServerError(err.Error(), nil)
 		}
 
 		type bookItem struct {
@@ -641,9 +623,8 @@ func registerApiEndpoints(app *pocketbase.PocketBase, e *core.ServeEvent) {
 			})
 		}
 
-
 		// Also get active event bank account info
-		activeEvent, _ := app.Dao().FindFirstRecordByData("events", "active", true)
+		activeEvent, _ := c.App.FindFirstRecordByData("events", "active", true)
 
 		return c.JSON(http.StatusOK, map[string]any{
 			"buyer": map[string]any{
@@ -655,48 +636,48 @@ func registerApiEndpoints(app *pocketbase.PocketBase, e *core.ServeEvent) {
 			"totalAmount": totalAmount,
 			"event":       activeEvent,
 		})
-	}, apis.ActivityLogger(app), apis.RequireRecordAuth("users"))
+	}).Bind(apis.RequireAuth("users"))
 
 	// POST /api/cashier/confirm-cash - Confirm cash payment at POS
-	e.Router.POST("/api/cashier/confirm-cash", func(c echo.Context) error {
-		authRecord, _ := c.Get(apis.ContextAuthRecordKey).(*models.Record)
+	e.Router.POST("/api/cashier/confirm-cash", func(c *core.RequestEvent) error {
+		authRecord := c.Auth
 		if authRecord == nil || !authRecord.GetBool("isCashier") {
-			return echo.NewHTTPError(http.StatusForbidden, "Pouze pokladní má oprávnění potvrdit platbu.")
+			return c.ForbiddenError("Pouze pokladní má oprávnění potvrdit platbu.", nil)
 		}
 
 		var req struct {
 			BuyerId string   `json:"buyerId"`
 			BookIds []string `json:"bookIds"`
 		}
-		if err := c.Bind(&req); err != nil || req.BuyerId == "" || len(req.BookIds) == 0 {
-			return echo.NewHTTPError(http.StatusBadRequest, "Chybí buyerId nebo seznam knih.")
+		if err := c.BindBody(&req); err != nil || req.BuyerId == "" || len(req.BookIds) == 0 {
+			return c.BadRequestError("Chybí buyerId nebo seznam knih.", nil)
 		}
 
-		var createdPayment *models.Record
-		err := app.Dao().RunInTransaction(func(txDao *daos.Dao) error {
+		var createdPayment *core.Record
+		err := c.App.RunInTransaction(func(txApp core.App) error {
 			vsLock.Lock()
 			defer vsLock.Unlock()
 
 			var maxVS int
-			_ = txDao.DB().Select("COALESCE(MAX(variableSymbol), 10000)").From("payments").Row(&maxVS)
+			_ = txApp.DB().Select("COALESCE(MAX(variableSymbol), 10000)").From("payments").Row(&maxVS)
 			nextVS := maxVS + 1
 
 			var totalAmount float64
 			for _, bookId := range req.BookIds {
-				b, err := txDao.FindRecordById("books", bookId)
+				b, err := txApp.FindRecordById("books", bookId)
 				if err != nil || b == nil {
-					return echo.NewHTTPError(http.StatusNotFound, fmt.Sprintf("Kniha '%s' nebyla nalezena.", bookId))
+					return c.NotFoundError(fmt.Sprintf("Kniha '%s' nebyla nalezena.", bookId), nil)
 				}
 				totalAmount += b.GetFloat("price")
 				b.Set("status", "bought")
 				b.Set("checkoutExpiresAt", "")
-				if err := txDao.SaveRecord(b); err != nil {
+				if err := txApp.Save(b); err != nil {
 					return fmt.Errorf("chyba při změně stavu knihy: %w", err)
 				}
 			}
 
 			// Clean buyer buy relation
-			if buyer, err := txDao.FindRecordById("users", req.BuyerId); err == nil {
+			if buyer, err := txApp.FindRecordById("users", req.BuyerId); err == nil {
 				cleared := make(map[string]bool)
 				for _, id := range req.BookIds {
 					cleared[id] = true
@@ -709,28 +690,27 @@ func registerApiEndpoints(app *pocketbase.PocketBase, e *core.ServeEvent) {
 					}
 				}
 				buyer.Set("buy", newBuy)
-				_ = txDao.SaveRecord(buyer)
+				_ = txApp.Save(buyer)
 			}
 
-			// If there were pending QR payments for these books, mark them cancelled so no orphans remain
+			// If there were pending QR payments for these books, mark them cancelled
 			for _, bookId := range req.BookIds {
-				pendingPayments, _ := txDao.FindRecordsByExpr("payments", dbx.And(
+				pendingPayments, _ := txApp.FindAllRecords("payments", dbx.And(
 					dbx.HashExp{"status": "pending"},
 					dbx.NewExp("books LIKE {:bId}", dbx.Params{"bId": "%" + bookId + "%"}),
 				))
 				for _, pp := range pendingPayments {
 					pp.Set("status", "cancelled")
-					_ = txDao.SaveRecord(pp)
+					_ = txApp.Save(pp)
 				}
 			}
 
-
-			paymentsColl, err := txDao.FindCollectionByNameOrId("payments")
+			paymentsColl, err := txApp.FindCollectionByNameOrId("payments")
 			if err != nil {
 				return err
 			}
 
-			createdPayment = models.NewRecord(paymentsColl)
+			createdPayment = core.NewRecord(paymentsColl)
 			createdPayment.Set("variableSymbol", nextVS)
 			createdPayment.Set("buyer", req.BuyerId)
 			createdPayment.Set("books", req.BookIds)
@@ -739,7 +719,7 @@ func registerApiEndpoints(app *pocketbase.PocketBase, e *core.ServeEvent) {
 			createdPayment.Set("status", "completed")
 			createdPayment.Set("cashier", authRecord.Id)
 
-			if err := txDao.SaveRecord(createdPayment); err != nil {
+			if err := txApp.Save(createdPayment); err != nil {
 				return fmt.Errorf("chyba při ukládání platby: %w", err)
 			}
 
@@ -747,63 +727,59 @@ func registerApiEndpoints(app *pocketbase.PocketBase, e *core.ServeEvent) {
 		})
 
 		if err != nil {
-			if httpErr, ok := err.(*echo.HTTPError); ok {
-				return httpErr
-			}
-			return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
+			return err
 		}
 
 		return c.JSON(http.StatusOK, map[string]any{
 			"success": true,
 			"payment": createdPayment,
 		})
-	}, apis.ActivityLogger(app), apis.RequireRecordAuth("users"))
+	}).Bind(apis.RequireAuth("users"))
 
 	// POST /api/cashier/create-qr-payment - Create pending QR payment with sequential VS
-	e.Router.POST("/api/cashier/create-qr-payment", func(c echo.Context) error {
-		authRecord, _ := c.Get(apis.ContextAuthRecordKey).(*models.Record)
+	e.Router.POST("/api/cashier/create-qr-payment", func(c *core.RequestEvent) error {
+		authRecord := c.Auth
 		if authRecord == nil || !authRecord.GetBool("isCashier") {
-			return echo.NewHTTPError(http.StatusForbidden, "Pouze pokladní má oprávnění vytvořit QR platbu.")
+			return c.ForbiddenError("Pouze pokladní má oprávnění vytvořit QR platbu.", nil)
 		}
 
 		var req struct {
 			BuyerId string   `json:"buyerId"`
 			BookIds []string `json:"bookIds"`
 		}
-		if err := c.Bind(&req); err != nil || req.BuyerId == "" || len(req.BookIds) == 0 {
-			return echo.NewHTTPError(http.StatusBadRequest, "Chybí buyerId nebo seznam knih.")
+		if err := c.BindBody(&req); err != nil || req.BuyerId == "" || len(req.BookIds) == 0 {
+			return c.BadRequestError("Chybí buyerId nebo seznam knih.", nil)
 		}
 
-		var createdPayment *models.Record
-		err := app.Dao().RunInTransaction(func(txDao *daos.Dao) error {
+		var createdPayment *core.Record
+		err := c.App.RunInTransaction(func(txApp core.App) error {
 			vsLock.Lock()
 			defer vsLock.Unlock()
 
 			var maxVS int
-			_ = txDao.DB().Select("COALESCE(MAX(variableSymbol), 10000)").From("payments").Row(&maxVS)
+			_ = txApp.DB().Select("COALESCE(MAX(variableSymbol), 10000)").From("payments").Row(&maxVS)
 			nextVS := maxVS + 1
 
 			var totalAmount float64
 			for _, bookId := range req.BookIds {
-				b, err := txDao.FindRecordById("books", bookId)
+				b, err := txApp.FindRecordById("books", bookId)
 				if err != nil || b == nil {
-					return echo.NewHTTPError(http.StatusNotFound, fmt.Sprintf("Kniha '%s' nebyla nalezena.", bookId))
+					return c.NotFoundError(fmt.Sprintf("Kniha '%s' nebyla nalezena.", bookId), nil)
 				}
 				totalAmount += b.GetFloat("price")
 				// Clear expiration timer while awaiting bank transfer so reaper doesn't unreserve
 				b.Set("checkoutExpiresAt", "")
-				if err := txDao.SaveRecord(b); err != nil {
+				if err := txApp.Save(b); err != nil {
 					return fmt.Errorf("chyba při aktualizaci knihy: %w", err)
 				}
 			}
 
-
-			paymentsColl, err := txDao.FindCollectionByNameOrId("payments")
+			paymentsColl, err := txApp.FindCollectionByNameOrId("payments")
 			if err != nil {
 				return err
 			}
 
-			createdPayment = models.NewRecord(paymentsColl)
+			createdPayment = core.NewRecord(paymentsColl)
 			createdPayment.Set("variableSymbol", nextVS)
 			createdPayment.Set("buyer", req.BuyerId)
 			createdPayment.Set("books", req.BookIds)
@@ -812,7 +788,7 @@ func registerApiEndpoints(app *pocketbase.PocketBase, e *core.ServeEvent) {
 			createdPayment.Set("status", "pending")
 			createdPayment.Set("cashier", authRecord.Id)
 
-			if err := txDao.SaveRecord(createdPayment); err != nil {
+			if err := txApp.Save(createdPayment); err != nil {
 				return fmt.Errorf("chyba při ukládání platby: %w", err)
 			}
 
@@ -820,58 +796,55 @@ func registerApiEndpoints(app *pocketbase.PocketBase, e *core.ServeEvent) {
 		})
 
 		if err != nil {
-			if httpErr, ok := err.(*echo.HTTPError); ok {
-				return httpErr
-			}
-			return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
+			return err
 		}
 
-		activeEvent, _ := app.Dao().FindFirstRecordByData("events", "active", true)
+		activeEvent, _ := c.App.FindFirstRecordByData("events", "active", true)
 
 		return c.JSON(http.StatusOK, map[string]any{
 			"success": true,
 			"payment": createdPayment,
 			"event":   activeEvent,
 		})
-	}, apis.ActivityLogger(app), apis.RequireRecordAuth("users"))
+	}).Bind(apis.RequireAuth("users"))
 
 	// POST /api/cashier/confirm-payment - Confirm a pending QR payment
-	e.Router.POST("/api/cashier/confirm-payment", func(c echo.Context) error {
-		authRecord, _ := c.Get(apis.ContextAuthRecordKey).(*models.Record)
+	e.Router.POST("/api/cashier/confirm-payment", func(c *core.RequestEvent) error {
+		authRecord := c.Auth
 		if authRecord == nil || !authRecord.GetBool("isCashier") {
-			return echo.NewHTTPError(http.StatusForbidden, "Pouze pokladní má oprávnění potvrdit platbu.")
+			return c.ForbiddenError("Pouze pokladní má oprávnění potvrdit platbu.", nil)
 		}
 
 		var req struct {
 			PaymentId string `json:"paymentId"`
 		}
-		if err := c.Bind(&req); err != nil || req.PaymentId == "" {
-			return echo.NewHTTPError(http.StatusBadRequest, "Chybí paymentId.")
+		if err := c.BindBody(&req); err != nil || req.PaymentId == "" {
+			return c.BadRequestError("Chybí paymentId.", nil)
 		}
 
-		err := app.Dao().RunInTransaction(func(txDao *daos.Dao) error {
-			payment, err := txDao.FindRecordById("payments", req.PaymentId)
+		err := c.App.RunInTransaction(func(txApp core.App) error {
+			payment, err := txApp.FindRecordById("payments", req.PaymentId)
 			if err != nil || payment == nil {
-				return echo.NewHTTPError(http.StatusNotFound, "Platba nebyla nalezena.")
+				return c.NotFoundError("Platba nebyla nalezena.", nil)
 			}
 
 			if payment.GetString("status") != "pending" {
-				return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("Platba již není ve stavu čekající (aktuální stav: %s).", payment.GetString("status")))
+				return c.BadRequestError(fmt.Sprintf("Platba již není ve stavu čekající (aktuální stav: %s).", payment.GetString("status")), nil)
 			}
 
 			bookIds := payment.GetStringSlice("books")
 			for _, bookId := range bookIds {
-				b, err := txDao.FindRecordById("books", bookId)
+				b, err := txApp.FindRecordById("books", bookId)
 				if err == nil && b != nil {
 					b.Set("status", "bought")
 					b.Set("checkoutExpiresAt", "")
-					_ = txDao.SaveRecord(b)
+					_ = txApp.Save(b)
 				}
 			}
 
 			// Clean buyer's buy relation
 			buyerId := payment.GetString("buyer")
-			if buyer, err := txDao.FindRecordById("users", buyerId); err == nil {
+			if buyer, err := txApp.FindRecordById("users", buyerId); err == nil {
 				cleared := make(map[string]bool)
 				for _, id := range bookIds {
 					cleared[id] = true
@@ -884,12 +857,12 @@ func registerApiEndpoints(app *pocketbase.PocketBase, e *core.ServeEvent) {
 					}
 				}
 				buyer.Set("buy", newBuy)
-				_ = txDao.SaveRecord(buyer)
+				_ = txApp.Save(buyer)
 			}
 
 			payment.Set("status", "completed")
 			payment.Set("cashier", authRecord.Id)
-			if err := txDao.SaveRecord(payment); err != nil {
+			if err := txApp.Save(payment); err != nil {
 				return fmt.Errorf("chyba při ukládání platby: %w", err)
 			}
 
@@ -897,18 +870,15 @@ func registerApiEndpoints(app *pocketbase.PocketBase, e *core.ServeEvent) {
 		})
 
 		if err != nil {
-			if httpErr, ok := err.(*echo.HTTPError); ok {
-				return httpErr
-			}
-			return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
+			return err
 		}
 
 		return c.JSON(http.StatusOK, map[string]any{"success": true})
-	}, apis.ActivityLogger(app), apis.RequireRecordAuth("users"))
+	}).Bind(apis.RequireAuth("users"))
 }
 
 // startCheckoutReaper runs every 30 seconds to release expired reservations
-func startCheckoutReaper(app *pocketbase.PocketBase) {
+func startCheckoutReaper(app core.App) {
 	go func() {
 		ticker := time.NewTicker(30 * time.Second)
 		defer ticker.Stop()
@@ -916,7 +886,7 @@ func startCheckoutReaper(app *pocketbase.PocketBase) {
 		for range ticker.C {
 			nowStr := time.Now().UTC().Format("2006-01-02 15:04:05.000Z")
 
-			records, err := app.Dao().FindRecordsByExpr("books", dbx.And(
+			records, err := app.FindAllRecords("books", dbx.And(
 				dbx.HashExp{"status": "checkout"},
 				dbx.NewExp("checkoutExpiresAt != '' AND checkoutExpiresAt < {:now}", dbx.Params{"now": nowStr}),
 			))
@@ -928,7 +898,7 @@ func startCheckoutReaper(app *pocketbase.PocketBase) {
 			for _, rec := range records {
 				// Don't reap books that have an active pending QR payment
 				var pendingCount int
-				_ = app.Dao().DB().Select("count(*)").From("payments").Where(dbx.And(
+				_ = app.DB().Select("count(*)").From("payments").Where(dbx.And(
 					dbx.HashExp{"status": "pending"},
 					dbx.NewExp("books LIKE {:bId}", dbx.Params{"bId": "%" + rec.Id + "%"}),
 				)).Row(&pendingCount)
@@ -942,12 +912,12 @@ func startCheckoutReaper(app *pocketbase.PocketBase) {
 				rec.Set("buyer", "")
 				rec.Set("checkoutExpiresAt", "")
 
-				if err := app.Dao().SaveRecord(rec); err != nil {
+				if err := app.Save(rec); err != nil {
 					log.Printf("[REAPER] Error saving book %s: %v", rec.Id, err)
 				}
 
 				if buyerId != "" {
-					if buyer, err := app.Dao().FindRecordById("users", buyerId); err == nil {
+					if buyer, err := app.FindRecordById("users", buyerId); err == nil {
 						buyIds := buyer.GetStringSlice("buy")
 						newBuyIds := make([]string, 0, len(buyIds))
 						for _, id := range buyIds {
@@ -956,7 +926,7 @@ func startCheckoutReaper(app *pocketbase.PocketBase) {
 							}
 						}
 						buyer.Set("buy", newBuyIds)
-						_ = app.Dao().SaveRecord(buyer)
+						_ = app.Save(buyer)
 					}
 				}
 			}

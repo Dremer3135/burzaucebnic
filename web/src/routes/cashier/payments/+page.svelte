@@ -9,7 +9,6 @@
 		CheckCircle2,
 		Clock,
 		Search,
-		User,
 		BookOpen,
 		RefreshCw,
 		Check,
@@ -66,7 +65,6 @@
 				method: 'POST',
 				body: { paymentId: payment.id }
 			});
-			// Live SSE will update payments automatically!
 		} catch (err: any) {
 			console.error('Failed to confirm payment', err);
 			errorMessage = err?.message || 'Chyba při potvrzení platby.';
@@ -85,47 +83,47 @@
 	}
 </script>
 
-<div class="flex-1 max-w-4xl w-full mx-auto p-4 flex flex-col pb-20">
+<div class="flex-1 max-w-4xl w-full mx-auto p-4 flex flex-col pb-24 bg-white text-black">
 	<!-- Top Navigation Bar between Scanner and Payments -->
-	<div class="flex items-center justify-between bg-slate-800/80 p-1.5 rounded-2xl border border-slate-700/80 mb-6 backdrop-blur">
+	<div class="flex items-center justify-between bg-white border-2 border-black p-1 mb-6 text-black">
 		<a
 			href="/cashier"
-			class="flex-1 py-2 px-3 rounded-xl text-center text-xs font-semibold text-slate-400 hover:text-slate-200 transition-all flex items-center justify-center gap-1.5"
+			class="flex-1 py-2.5 px-3 text-center text-xs font-black uppercase tracking-wider text-black hover:bg-neutral-100 transition-all flex items-center justify-center gap-1.5"
 		>
 			<Scan class="w-4 h-4" />
-			Pokladní skener
+			POKLADNÍ SKENER
 		</a>
 		<a
 			href="/cashier/payments"
-			class="flex-1 py-2 px-3 rounded-xl text-center text-xs font-bold transition-all bg-emerald-600 text-white shadow-sm flex items-center justify-center gap-1.5"
+			class="flex-1 py-2.5 px-3 text-center text-xs font-black uppercase tracking-wider transition-all bg-black text-white flex items-center justify-center gap-1.5"
 		>
 			<Receipt class="w-4 h-4" />
-			Bankovní platby
+			BANKOVNÍ PLATBY
 		</a>
 	</div>
 
 	<!-- Page Header -->
-	<div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-6">
+	<div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-6 border-b-2 border-black pb-3">
 		<div>
-			<h1 class="text-xl sm:text-2xl font-bold text-white tracking-tight">Ověření bankovních plateb</h1>
-			<p class="text-xs text-slate-400">
+			<h1 class="text-2xl font-black uppercase tracking-tight text-black">OVĚŘENÍ BANKOVNÍCH PLATEB</h1>
+			<p class="text-xs font-bold text-neutral-600 uppercase">
 				Párování plateb podle Variabilního symbolu (VS) s vaším bankovním výpisem
 			</p>
 		</div>
 
 		<button
 			onclick={() => cashierPayments.refresh()}
-			class="self-start sm:self-auto p-2 rounded-xl bg-slate-800 text-slate-300 hover:text-white border border-slate-700 transition-colors flex items-center gap-1.5 text-xs"
+			class="self-start sm:self-auto p-2.5 bg-white text-black hover:bg-neutral-100 border-2 border-black transition-colors flex items-center gap-1.5 text-xs font-black uppercase cursor-pointer"
 			title="Obnovit"
 		>
-			<RefreshCw class="w-4 h-4 {cashierPayments.isLoading ? 'animate-spin text-emerald-400' : ''}" />
-			<span>Aktualizovat</span>
+			<RefreshCw class="w-4 h-4 {cashierPayments.isLoading ? 'animate-spin' : ''}" />
+			<span>AKTUALIZOVAT</span>
 		</button>
 	</div>
 
 	{#if errorMessage}
-		<div class="mb-4 p-3 bg-rose-500/15 border border-rose-500/30 text-rose-300 text-xs rounded-xl flex items-center gap-2">
-			<AlertCircle class="w-4 h-4 shrink-0" />
+		<div class="mb-4 p-3 bg-red-50 border-2 border-red-600 text-red-700 text-xs font-bold flex items-center gap-2">
+			<AlertCircle class="w-4 h-4 shrink-0 text-red-600" />
 			<span>{errorMessage}</span>
 		</div>
 	{/if}
@@ -133,17 +131,17 @@
 	<!-- Search & Filter Controls -->
 	<div class="flex flex-col sm:flex-row gap-3 items-stretch sm:items-center justify-between mb-4">
 		<!-- Tabs -->
-		<div class="flex bg-slate-800/80 p-1 rounded-xl border border-slate-700/60 text-xs">
+		<div class="flex border-2 border-black bg-white p-1 text-xs">
 			<button
 				onclick={() => (activeTab = 'pending')}
-				class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition-all cursor-pointer {activeTab === 'pending'
-					? 'bg-amber-500/20 text-amber-300 font-bold border border-amber-500/40'
-					: 'text-slate-400 hover:text-slate-200'}"
+				class="flex items-center gap-1.5 px-3 py-2 transition-all cursor-pointer font-black uppercase {activeTab === 'pending'
+					? 'bg-black text-white'
+					: 'text-black hover:bg-neutral-100'}"
 			>
-				<Clock class="w-3.5 h-3.5" />
-				<span>Čekající na připsání</span>
+				<Clock class="w-4 h-4" />
+				<span>ČEKAJÍCÍ NA PŘIPSÁNÍ</span>
 				{#if pendingCount > 0}
-					<span class="ml-1 px-1.5 py-0.2 bg-amber-500 text-slate-950 font-bold rounded-full text-[10px]">
+					<span class="ml-1 px-1.5 py-0.5 bg-white text-black font-black text-[10px] border border-black">
 						{pendingCount}
 					</span>
 				{/if}
@@ -151,23 +149,23 @@
 
 			<button
 				onclick={() => (activeTab = 'completed')}
-				class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition-all cursor-pointer {activeTab === 'completed'
-					? 'bg-emerald-500/20 text-emerald-300 font-bold border border-emerald-500/40'
-					: 'text-slate-400 hover:text-slate-200'}"
+				class="flex items-center gap-1.5 px-3 py-2 transition-all cursor-pointer font-black uppercase {activeTab === 'completed'
+					? 'bg-black text-white'
+					: 'text-black hover:bg-neutral-100'}"
 			>
-				<CheckCircle2 class="w-3.5 h-3.5" />
-				<span>Dokončené</span>
+				<CheckCircle2 class="w-4 h-4" />
+				<span>DOKONČENÉ</span>
 			</button>
 		</div>
 
 		<!-- Search Input -->
-		<div class="relative min-w-[200px]">
-			<Search class="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
+		<div class="relative min-w-[240px]">
+			<Search class="w-4 h-4 text-black absolute left-3 top-3" />
 			<input
 				type="text"
 				bind:value={searchQuery}
-				placeholder="Hledat VS, jméno, ID..."
-				class="w-full bg-slate-800/90 border border-slate-700/80 rounded-xl pl-9 pr-3 py-1.5 text-xs text-white focus:outline-none focus:border-emerald-500"
+				placeholder="HLEDAT VS, JMÉNO..."
+				class="w-full bg-white border-2 border-black pl-9 pr-3 py-2 text-xs font-black uppercase text-black focus:outline-none"
 			/>
 		</div>
 	</div>
@@ -175,13 +173,13 @@
 	<!-- Payments List -->
 	{#if cashierPayments.isLoading && cashierPayments.payments.length === 0}
 		<div class="flex-1 flex items-center justify-center py-20">
-			<RefreshCw class="w-8 h-8 animate-spin text-emerald-400" />
+			<RefreshCw class="w-8 h-8 animate-spin text-black" />
 		</div>
 	{:else if filteredPayments.length === 0}
-		<div class="flex-1 flex flex-col items-center justify-center p-8 bg-slate-800/40 border border-dashed border-slate-700 rounded-3xl text-center my-6">
-			<Receipt class="w-10 h-10 text-slate-500 mb-2" />
-			<h3 class="text-sm font-semibold text-white">Žádné platby v této kategorii</h3>
-			<p class="text-xs text-slate-400 mt-1">
+		<div class="flex-1 flex flex-col items-center justify-center p-8 bg-neutral-50 border-2 border-dashed border-black text-center my-6">
+			<Receipt class="w-10 h-10 text-neutral-400 mb-2" />
+			<h3 class="text-base font-black uppercase tracking-tight text-black">Žádné platby v této kategorii</h3>
+			<p class="text-xs font-bold text-neutral-600 uppercase mt-1">
 				{activeTab === 'pending'
 					? 'Všechny platby jsou vyřízeny.'
 					: 'Zatím nebyly potvrzeny žádné platby.'}
@@ -190,55 +188,55 @@
 	{:else}
 		<div class="space-y-3 flex-1">
 			{#each filteredPayments as payment (payment.id)}
-				<div class="bg-slate-800/80 border border-slate-700/80 rounded-2xl p-4 shadow-md backdrop-blur transition-all">
-					<div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-700/60">
+				<div class="bg-white border-2 border-black p-4 text-black transition-all">
+					<div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b-2 border-black">
 						<div class="flex items-center gap-3">
-							<!-- Prominent Variable Symbol -->
-							<div class="bg-slate-900 border border-slate-700 rounded-xl px-3 py-1 text-center">
-								<span class="text-[9px] uppercase tracking-wider text-slate-400 block font-semibold">VS</span>
-								<span class="text-base font-black text-amber-400 font-mono tracking-wide">
+							<!-- Variable Symbol -->
+							<div class="bg-neutral-100 border-2 border-black px-3 py-1.5 text-center">
+								<span class="text-[10px] uppercase font-black text-neutral-600 block">VS</span>
+								<span class="text-xl font-black text-black font-mono tracking-wide">
 									{payment.variableSymbol}
 								</span>
 							</div>
 
 							<div>
 								<div class="flex items-center gap-2">
-									<span class="text-sm font-bold text-white">
+									<span class="text-sm font-black uppercase text-black">
 										{payment.expand?.buyer?.name || 'Kupující'}
 									</span>
-									<span class="text-[11px] font-mono text-slate-400">
+									<span class="text-xs font-mono font-bold text-neutral-600">
 										({payment.expand?.buyer?.email})
 									</span>
 								</div>
-								<div class="text-[11px] text-slate-400 mt-0.5">
-									{formatDate(payment.created)} • Zpráva pro příjemce: <code class="text-slate-300 font-mono">{payment.id}</code>
+								<div class="text-xs font-bold text-neutral-600 mt-0.5">
+									{formatDate(payment.created)} • ID: <code class="font-mono text-black">{payment.id}</code>
 								</div>
 							</div>
 						</div>
 
 						<div class="text-right">
-							<div class="text-lg font-black text-emerald-400">
+							<div class="text-2xl font-black text-black">
 								{payment.totalAmount} Kč
 							</div>
-							<span class="text-[10px] uppercase font-bold px-2 py-0.5 rounded-full {payment.method === 'cash' ? 'bg-emerald-500/20 text-emerald-300' : 'bg-blue-500/20 text-blue-300'}">
-								{payment.method === 'cash' ? 'Hotovost' : 'QR Platba'}
+							<span class="text-[10px] uppercase font-black px-2 py-0.5 border-2 border-black {payment.method === 'cash' ? 'bg-neutral-200' : 'bg-white'}">
+								{payment.method === 'cash' ? 'HOTOVOST' : 'QR PLATBA'}
 							</span>
 						</div>
 					</div>
 
 					<!-- Books included -->
 					<div class="pt-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-						<div class="text-xs text-slate-400 flex items-center gap-1.5 flex-wrap">
-							<BookOpen class="w-3.5 h-3.5 text-slate-400 shrink-0" />
-							<span>Položky ({payment.books.length}):</span>
+						<div class="text-xs font-bold text-neutral-700 flex items-center gap-1.5 flex-wrap">
+							<BookOpen class="w-4 h-4 text-black shrink-0" />
+							<span class="uppercase">Položky ({payment.books.length}):</span>
 							{#if payment.expand?.books}
 								{#each payment.expand.books as b}
-									<span class="bg-slate-900 px-2 py-0.5 rounded text-slate-300 font-mono text-[11px] border border-slate-800">
+									<span class="bg-neutral-100 px-2 py-1 text-black font-mono font-black text-xs border border-black uppercase">
 										{b.code} ({b.price} Kč)
 									</span>
 								{/each}
 							{:else}
-								<span class="text-slate-400">{payment.books.length} knih</span>
+								<span>{payment.books.length} knih</span>
 							{/if}
 						</div>
 
@@ -247,20 +245,20 @@
 							<button
 								onclick={() => handleConfirmPayment(payment)}
 								disabled={confirmingPaymentId === payment.id}
-								class="py-2 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-500 active:scale-95 text-white font-bold text-xs transition-all shadow-md flex items-center justify-center gap-1.5 cursor-pointer shrink-0 disabled:opacity-50"
+								class="py-2.5 px-4 bg-black text-white hover:bg-neutral-800 active:bg-neutral-900 font-black text-xs uppercase tracking-wider border-2 border-black transition-all flex items-center justify-center gap-1.5 cursor-pointer shrink-0 disabled:opacity-50"
 							>
 								{#if confirmingPaymentId === payment.id}
-									<RefreshCw class="w-3.5 h-3.5 animate-spin" />
-									<span>Potvrzuji...</span>
+									<RefreshCw class="w-4 h-4 animate-spin" />
+									<span>POTVRZUJI...</span>
 								{:else}
 									<Check class="w-4 h-4" />
-									<span>Potvrdit platbu (připsáno)</span>
+									<span>POTVRDIT PŘIPSÁNÍ</span>
 								{/if}
 							</button>
 						{:else}
-							<div class="flex items-center gap-1 text-emerald-400 text-xs font-semibold">
-								<CheckCircle2 class="w-4 h-4" />
-								<span>Vyřízeno a předáno</span>
+							<div class="flex items-center gap-1 text-black text-xs font-black uppercase">
+								<CheckCircle2 class="w-4 h-4 text-black" />
+								<span>VYŘÍZENO A PŘEDÁNO</span>
 							</div>
 						{/if}
 					</div>

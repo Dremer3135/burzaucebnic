@@ -3,7 +3,12 @@
 	import { goto } from '$app/navigation';
 	import { auth, eventStore, sellerBooks } from '$lib/stores.svelte';
 	import { pb, getBookThumbnailUrl, getBookFullImageUrl } from '$lib/pocketbase';
-	import { scanFrameForDataMatrix, capturePhotoFromVideo, drawBoundingBox } from '$lib/scanner';
+	import {
+		scanFrameForDataMatrix,
+		capturePhotoFromVideo,
+		drawBoundingBox,
+		CAMERA_CONSTRAINTS
+	} from '$lib/scanner';
 	import { Plus, Camera, Check, X, Tag, AlertCircle, RefreshCw, ChevronLeft } from '@lucide/svelte';
 	import type { Book } from '$lib/types';
 
@@ -18,7 +23,6 @@
 
 	let videoElement = $state<HTMLVideoElement | null>(null);
 	let canvasElement = $state<HTMLCanvasElement | null>(null);
-	let overlayCanvas = $state<HTMLCanvasElement | null>(null);
 	let mediaStream = $state<MediaStream | null>(null);
 	let scanAnimationId = $state<number | null>(null);
 
@@ -28,17 +32,22 @@
 	// Full-res preview modal
 	let selectedPreviewBook = $state<Book | null>(null);
 
+	onMount(() => {
+		if (auth.user) {
+			sellerBooks.init(auth.user.id);
+		}
+	});
+
 	$effect(() => {
 		if (!auth.user) {
 			goto('/');
-		} else {
-			sellerBooks.init(auth.user.id);
 		}
 	});
 
 	onDestroy(() => {
 		stopCamera();
 		if (photoPreviewUrl) URL.revokeObjectURL(photoPreviewUrl);
+		sellerBooks.cleanup();
 	});
 
 	async function openSellModal() {
@@ -54,7 +63,6 @@
 		errorMessage = '';
 		isModalOpen = true;
 
-		// Start camera after modal renders
 		setTimeout(startCamera, 100);
 	}
 
@@ -68,14 +76,7 @@
 	async function startCamera() {
 		stopCamera();
 		try {
-			const stream = await navigator.mediaDevices.getUserMedia({
-				video: {
-					facingMode: 'environment',
-					width: { ideal: 1280 },
-					height: { ideal: 720 }
-				},
-				audio: false
-			});
+			const stream = await navigator.mediaDevices.getUserMedia(CAMERA_CONSTRAINTS);
 			mediaStream = stream;
 			if (videoElement) {
 				videoElement.srcObject = stream;
@@ -112,7 +113,6 @@
 			try {
 				const match = await scanFrameForDataMatrix(canvasElement, videoElement);
 				if (match && match.text) {
-					// Vibrate feedback if supported
 					if (navigator.vibrate) navigator.vibrate([100]);
 
 					scannedCode = match.text.trim();
@@ -128,7 +128,6 @@
 
 		scanAnimationId = requestAnimationFrame(startScanningLoop);
 	}
-
 
 	async function takeBookPhoto() {
 		if (!videoElement) return;
@@ -185,7 +184,6 @@
 
 			await pb.collection('books').create(formData);
 
-			// Refresh seller list and close
 			await sellerBooks.refresh();
 			closeSellModal();
 		} catch (err: any) {
@@ -199,56 +197,56 @@
 	function getStatusBadge(status: string) {
 		switch (status) {
 			case 'available':
-				return { label: 'K prodeji', bg: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30' };
+				return { label: 'K PRODEJI', cls: 'bg-black text-white border-black' };
 			case 'checkout':
-				return { label: 'V rezervaci', bg: 'bg-amber-500/20 text-amber-300 border-amber-500/30' };
+				return { label: 'V REZERVACI', cls: 'bg-neutral-200 text-black border-black' };
 			case 'bought':
-				return { label: 'Prodáno', bg: 'bg-slate-700/60 text-slate-300 border-slate-600/50' };
+				return { label: 'PRODÁNO', cls: 'bg-white text-neutral-400 border-neutral-300 line-through' };
 			default:
-				return { label: status, bg: 'bg-slate-700 text-slate-300' };
+				return { label: status.toUpperCase(), cls: 'bg-white text-black border-black' };
 		}
 	}
 </script>
 
-<div class="flex-1 max-w-4xl w-full mx-auto p-4 flex flex-col pb-24">
+<div class="flex-1 max-w-4xl w-full mx-auto p-4 flex flex-col pb-28 bg-white text-black">
 	<!-- Page Header -->
-	<div class="flex items-center justify-between mb-4">
+	<div class="flex items-center justify-between mb-4 border-b-2 border-black pb-3">
 		<div>
-			<h1 class="text-xl sm:text-2xl font-bold text-white tracking-tight">Moje učebnice k prodeji</h1>
-			<p class="text-xs text-slate-400">
+			<h1 class="text-2xl font-black uppercase tracking-tight text-black">MOJE UČEBNICE K PRODEJI</h1>
+			<p class="text-xs font-bold text-neutral-600 uppercase">
 				Přehled vámi nabízených učebnic a jejich aktuální stav
 			</p>
 		</div>
 
 		<button
 			onclick={() => sellerBooks.refresh()}
-			class="p-2 rounded-xl bg-slate-800 text-slate-300 hover:text-white border border-slate-700 transition-colors"
+			class="p-2.5 bg-white text-black hover:bg-neutral-100 border-2 border-black transition-colors cursor-pointer"
 			title="Obnovit"
 		>
-			<RefreshCw class="w-4 h-4 {sellerBooks.isLoading ? 'animate-spin text-emerald-400' : ''}" />
+			<RefreshCw class="w-4 h-4 {sellerBooks.isLoading ? 'animate-spin' : ''}" />
 		</button>
 	</div>
 
 	<!-- Books List -->
 	{#if sellerBooks.isLoading && sellerBooks.books.length === 0}
 		<div class="flex-1 flex items-center justify-center py-16">
-			<RefreshCw class="w-6 h-6 animate-spin text-emerald-500" />
+			<RefreshCw class="w-8 h-8 animate-spin text-black" />
 		</div>
 	{:else if sellerBooks.books.length === 0}
-		<div class="flex-1 flex flex-col items-center justify-center p-8 bg-slate-800/40 border border-dashed border-slate-700 rounded-3xl text-center my-6">
-			<div class="p-4 bg-emerald-500/10 text-emerald-400 rounded-full mb-3">
-				<Tag class="w-8 h-8" />
+		<div class="flex-1 flex flex-col items-center justify-center p-8 bg-neutral-50 border-2 border-dashed border-black text-center my-6">
+			<div class="p-4 bg-white border-2 border-black mb-3">
+				<Tag class="w-8 h-8 text-black" />
 			</div>
-			<h3 class="text-base font-semibold text-white mb-1">Zatím nemáte vystavené žádné učebnice</h3>
-			<p class="text-xs text-slate-400 max-w-xs mb-5">
-				Klepněte na zelené tlačítko plus v pravém dolním rohu pro naskenování kódu a přidání první učebnice.
+			<h3 class="text-lg font-black uppercase tracking-tight text-black mb-1">Žádné učebnice k prodeji</h3>
+			<p class="text-xs font-bold text-neutral-600 uppercase max-w-xs mb-6">
+				Klepněte na tlačítko níže pro naskenování kódu a přidání první učebnice.
 			</p>
 			<button
 				onclick={openSellModal}
-				class="inline-flex items-center gap-2 py-2.5 px-4 bg-emerald-600 hover:bg-emerald-500 text-white font-medium rounded-xl text-xs transition-colors shadow-lg shadow-emerald-950 cursor-pointer"
+				class="inline-flex items-center gap-2 py-3 px-6 bg-black text-white font-black text-sm uppercase tracking-wider hover:bg-neutral-800 active:bg-neutral-900 border-2 border-black transition-colors cursor-pointer"
 			>
-				<Plus class="w-4 h-4" />
-				Přidat učebnici do prodeje
+				<Plus class="w-5 h-5" />
+				PŘIDAT UČEBNICI DO PRODEJE
 			</button>
 		</div>
 	{:else}
@@ -256,26 +254,26 @@
 			{#each sellerBooks.books as book (book.id)}
 				{@const badge = getStatusBadge(book.status)}
 				<div
-					class="bg-slate-800/80 border border-slate-700/70 rounded-2xl p-3 flex gap-3 shadow-md hover:border-slate-600 transition-all backdrop-blur"
+					class="bg-white border-2 border-black p-3 flex gap-3 text-black transition-all"
 				>
-					<!-- Thumbnail with click to preview full res -->
+					<!-- Thumbnail -->
 					<button
 						type="button"
 						onclick={() => (selectedPreviewBook = book)}
-						class="w-20 h-28 shrink-0 rounded-xl overflow-hidden bg-slate-900 border border-slate-700/80 relative group cursor-pointer"
+						class="w-20 h-28 shrink-0 border-2 border-black overflow-hidden bg-neutral-100 relative group cursor-pointer"
 					>
 						{#if book.photo}
 							<img
 								src={getBookThumbnailUrl(book)}
 								alt={book.code}
-								class="w-full h-full object-cover group-hover:scale-105 transition-transform"
+								class="w-full h-full object-cover"
 							/>
 						{:else}
-							<div class="w-full h-full flex items-center justify-center text-slate-600">
+							<div class="w-full h-full flex items-center justify-center text-neutral-400">
 								<Camera class="w-6 h-6" />
 							</div>
 						{/if}
-						<div class="absolute inset-0 bg-black/30 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-[10px] text-white font-medium">
+						<div class="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-[10px] text-white font-black uppercase">
 							Detail
 						</div>
 					</button>
@@ -284,18 +282,18 @@
 					<div class="flex-1 flex flex-col justify-between py-0.5">
 						<div>
 							<div class="flex items-center justify-between gap-1 mb-1.5">
-								<span class="text-xs font-semibold text-slate-200 truncate" title={book.code}>
+								<span class="text-xs font-black text-black truncate uppercase" title={book.code}>
 									{book.code}
 								</span>
 							</div>
 
-							<div class="text-lg font-bold text-emerald-400">
+							<div class="text-xl font-black text-black">
 								{book.price} Kč
 							</div>
 						</div>
 
 						<div class="mt-2 flex items-center justify-between">
-							<span class="text-[11px] px-2 py-0.5 rounded-full border {badge.bg} font-medium">
+							<span class="text-[10px] font-black px-2 py-0.5 border-2 {badge.cls}">
 								{badge.label}
 							</span>
 						</div>
@@ -305,22 +303,22 @@
 		</div>
 	{/if}
 
-	<!-- Intuitive Green Circular Plus Button (FAB) at Bottom Right -->
+	<!-- Plus FAB at Bottom Right -->
 	<button
 		onclick={openSellModal}
-		class="fixed bottom-6 right-6 z-30 w-14 h-14 rounded-full bg-emerald-500 hover:bg-emerald-400 active:scale-95 text-slate-950 font-bold shadow-xl shadow-emerald-950/50 flex items-center justify-center transition-all cursor-pointer"
+		class="fixed bottom-6 right-6 z-30 w-16 h-16 bg-black text-white border-4 border-black hover:bg-neutral-800 active:bg-neutral-900 flex items-center justify-center transition-all cursor-pointer"
 		title="Přidat učebnici k prodeji"
 	>
-		<Plus class="w-7 h-7 stroke-[2.5]" />
+		<Plus class="w-8 h-8 stroke-[3]" />
 	</button>
 </div>
 
 <!-- FULL-RES IMAGE MODAL -->
 {#if selectedPreviewBook}
-	<div class="fixed inset-0 z-50 bg-black/90 flex flex-col items-center justify-center p-4 backdrop-blur-sm">
+	<div class="fixed inset-0 z-50 bg-black/90 flex flex-col items-center justify-center p-4">
 		<button
 			onclick={() => (selectedPreviewBook = null)}
-			class="absolute top-4 right-4 p-2.5 rounded-full bg-slate-800/80 text-white hover:bg-slate-700 transition-colors"
+			class="absolute top-4 right-4 p-3 bg-white text-black border-2 border-black hover:bg-neutral-200 transition-colors"
 		>
 			<X class="w-6 h-6" />
 		</button>
@@ -328,11 +326,11 @@
 			<img
 				src={getBookFullImageUrl(selectedPreviewBook)}
 				alt={selectedPreviewBook.code}
-				class="max-w-full max-h-[70vh] rounded-2xl object-contain border border-slate-700 shadow-2xl mb-4"
+				class="max-w-full max-h-[70vh] object-contain border-4 border-black bg-white mb-4"
 			/>
-			<div class="text-center">
-				<p class="text-base font-bold text-white">{selectedPreviewBook.code}</p>
-				<p class="text-emerald-400 font-bold text-lg">{selectedPreviewBook.price} Kč</p>
+			<div class="text-center bg-white border-2 border-black p-3 w-full">
+				<p class="text-base font-black uppercase text-black">{selectedPreviewBook.code}</p>
+				<p class="text-2xl font-black text-black">{selectedPreviewBook.price} Kč</p>
 			</div>
 		</div>
 	</div>
@@ -340,19 +338,19 @@
 
 <!-- ADD BOOK CAMERA / SUBMIT MODAL -->
 {#if isModalOpen}
-	<div class="fixed inset-0 z-50 bg-slate-950 flex flex-col">
+	<div class="fixed inset-0 z-50 bg-black flex flex-col">
 		<!-- Top Bar -->
-		<div class="flex items-center justify-between px-4 py-3 bg-slate-900 border-b border-slate-800 z-10">
+		<div class="flex items-center justify-between px-4 py-3 bg-white border-b-2 border-black z-10 text-black">
 			<div class="flex items-center gap-2">
 				{#if step !== 'SCAN_CODE'}
 					<button
 						onclick={step === 'ENTER_PRICE' ? retakePhoto : rescanCode}
-						class="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800"
+						class="p-1.5 border-2 border-black bg-white hover:bg-neutral-100 text-black cursor-pointer"
 					>
 						<ChevronLeft class="w-5 h-5" />
 					</button>
 				{/if}
-				<h2 class="text-sm font-semibold text-white">
+				<h2 class="text-sm font-black uppercase tracking-wider text-black">
 					{step === 'SCAN_CODE'
 						? '1/3 Naskenujte Data Matrix'
 						: step === 'CAPTURE_COVER'
@@ -363,7 +361,7 @@
 
 			<button
 				onclick={closeSellModal}
-				class="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800"
+				class="p-1.5 border-2 border-black bg-white hover:bg-neutral-100 text-black cursor-pointer"
 			>
 				<X class="w-5 h-5" />
 			</button>
@@ -371,7 +369,6 @@
 
 		<!-- Main Camera / Preview Area -->
 		<div class="relative flex-1 bg-black flex items-center justify-center overflow-hidden">
-			<!-- Live Video -->
 			<video
 				bind:this={videoElement}
 				playsinline
@@ -380,43 +377,32 @@
 				class="w-full h-full object-cover {step === 'ENTER_PRICE' ? 'hidden' : 'block'}"
 			></video>
 
-			<!-- Hidden helper canvas for barcode processing -->
 			<canvas bind:this={canvasElement} class="hidden"></canvas>
 
-			<!-- STEP 1 OVERLAY: Scanning for Data Matrix -->
+			<!-- STEP 1 OVERLAY -->
 			{#if step === 'SCAN_CODE'}
 				<div class="absolute inset-0 pointer-events-none flex flex-col items-center justify-center">
-					<div class="w-56 h-56 border-2 border-emerald-400/80 rounded-2xl relative animate-pulse flex items-center justify-center">
-						<div class="absolute inset-0 bg-emerald-500/10 rounded-2xl"></div>
-						<!-- Corner accents -->
-						<div class="absolute -top-1 -left-1 w-6 h-6 border-t-4 border-l-4 border-emerald-400 rounded-tl-lg"></div>
-						<div class="absolute -top-1 -right-1 w-6 h-6 border-t-4 border-r-4 border-emerald-400 rounded-tr-lg"></div>
-						<div class="absolute -bottom-1 -left-1 w-6 h-6 border-b-4 border-l-4 border-emerald-400 rounded-bl-lg"></div>
-						<div class="absolute -bottom-1 -right-1 w-6 h-6 border-b-4 border-r-4 border-emerald-400 rounded-br-lg"></div>
-						<span class="text-xs font-semibold text-emerald-300 bg-slate-900/80 px-2 py-1 rounded">
-							Hledám Data Matrix...
+					<div class="w-56 h-56 border-4 border-white relative flex items-center justify-center">
+						<span class="text-xs font-black uppercase tracking-wider text-black bg-white px-2.5 py-1 border-2 border-black">
+							Hledám kód...
 						</span>
 					</div>
-					<p class="text-xs text-white/90 bg-slate-900/80 px-3 py-1.5 rounded-full mt-6 backdrop-blur shadow">
-						Namiřte kameru na samolepku s kódem
+					<p class="text-xs font-black uppercase tracking-wider text-black bg-white px-3 py-1.5 border-2 border-black mt-6">
+						Namiřte kameru na samolepku
 					</p>
 				</div>
 			{/if}
 
-			<!-- STEP 2 OVERLAY: Book Aspect Ratio Guide Rectangle -->
+			<!-- STEP 2 OVERLAY -->
 			{#if step === 'CAPTURE_COVER'}
 				<div class="absolute inset-0 pointer-events-none flex flex-col items-center justify-center">
-					<!-- Standard Book Aspect Ratio ~ 1:1.41 (A-format or B-format book) -->
-					<div class="w-[70vw] max-w-xs aspect-[1/1.4] border-2 border-white/90 rounded-2xl shadow-2xl relative">
-						<!-- Translucent guide lines -->
-						<div class="absolute inset-0 border border-dashed border-white/40 rounded-2xl m-2"></div>
-						<!-- Badge at top -->
-						<div class="absolute -top-3 left-1/2 -translate-x-1/2 bg-emerald-600 text-white text-[11px] font-bold px-2.5 py-0.5 rounded-full shadow">
+					<div class="w-[70vw] max-w-xs aspect-[1/1.4] border-4 border-white relative">
+						<div class="absolute -top-4 left-1/2 -translate-x-1/2 bg-white text-black border-2 border-black text-xs font-black uppercase px-3 py-0.5">
 							Kód: {scannedCode}
 						</div>
 					</div>
-					<p class="text-xs text-white bg-slate-900/80 px-3 py-1.5 rounded-full mt-4 backdrop-blur shadow">
-						Zarovnejte přední obálku do rámečku
+					<p class="text-xs font-black uppercase tracking-wider text-black bg-white px-3 py-1.5 border-2 border-black mt-4">
+						Zarovnejte obálku do rámečku
 					</p>
 				</div>
 
@@ -424,46 +410,46 @@
 				<div class="absolute bottom-6 inset-x-0 flex justify-center items-center z-20">
 					<button
 						onclick={takeBookPhoto}
-						class="w-18 h-18 rounded-full border-4 border-white bg-emerald-500 hover:bg-emerald-400 active:scale-95 transition-all shadow-2xl flex items-center justify-center cursor-pointer"
+						class="w-20 h-20 border-4 border-black bg-white hover:bg-neutral-200 active:bg-neutral-300 transition-all flex items-center justify-center cursor-pointer"
 						title="Vyfotit obálku"
 					>
-						<Camera class="w-8 h-8 text-slate-950" />
+						<Camera class="w-10 h-10 text-black" />
 					</button>
 				</div>
 			{/if}
 
 			<!-- STEP 3: Photo Preview and Price Entry -->
 			{#if step === 'ENTER_PRICE' && photoPreviewUrl}
-				<div class="absolute inset-0 bg-slate-900 flex flex-col p-4 overflow-y-auto">
+				<div class="absolute inset-0 bg-white flex flex-col p-4 overflow-y-auto text-black">
 					<div class="flex-1 flex flex-col items-center justify-center max-w-sm mx-auto w-full">
-						<div class="relative w-44 aspect-[1/1.4] rounded-2xl overflow-hidden shadow-2xl border-2 border-slate-700 mb-4 bg-slate-950">
+						<div class="relative w-44 aspect-[1/1.4] overflow-hidden border-4 border-black mb-4 bg-neutral-100">
 							<img src={photoPreviewUrl} alt="Obálka" class="w-full h-full object-cover" />
 							<button
 								type="button"
 								onclick={retakePhoto}
-								class="absolute top-2 right-2 p-1.5 rounded-lg bg-black/60 text-white hover:bg-black text-xs flex items-center gap-1"
+								class="absolute top-2 right-2 p-1.5 bg-black text-white hover:bg-neutral-800 text-xs font-black uppercase flex items-center gap-1 border border-white"
 							>
 								<RefreshCw class="w-3.5 h-3.5" />
 								Znovu
 							</button>
 						</div>
 
-						<div class="w-full bg-slate-800/90 rounded-2xl p-4 border border-slate-700/80 shadow-xl">
-							<div class="text-xs text-slate-400 mb-1">Kód Data Matrix:</div>
-							<div class="text-sm font-mono font-bold text-emerald-400 mb-4 bg-slate-900 px-3 py-1.5 rounded-lg border border-slate-800">
+						<div class="w-full bg-white p-5 border-4 border-black">
+							<div class="text-xs font-black uppercase text-neutral-600 mb-1">KÓD DATA MATRIX:</div>
+							<div class="text-sm font-mono font-black text-black mb-4 bg-neutral-100 px-3 py-2 border-2 border-black">
 								{scannedCode}
 							</div>
 
 							{#if errorMessage}
-								<div class="mb-3 p-2.5 bg-rose-500/10 border border-rose-500/30 text-rose-300 text-xs rounded-xl flex items-start gap-2">
-									<AlertCircle class="w-4 h-4 shrink-0 mt-0.5" />
+								<div class="mb-4 p-3 bg-red-50 border-2 border-red-600 text-red-700 text-xs font-bold flex items-start gap-2">
+									<AlertCircle class="w-4 h-4 shrink-0 mt-0.5 text-red-600" />
 									<span>{errorMessage}</span>
 								</div>
 							{/if}
 
 							<form onsubmit={submitBook} class="space-y-4">
 								<div>
-									<label for="book-price" class="block text-xs font-medium text-slate-300 mb-1">
+									<label for="book-price" class="block text-xs font-black uppercase text-black mb-1">
 										Prodejní cena (v Kč)
 									</label>
 									<div class="relative">
@@ -475,9 +461,9 @@
 											max="10000"
 											required
 											placeholder="Např. 150"
-											class="w-full bg-slate-900 border border-slate-700 rounded-xl px-4 py-2.5 text-lg font-bold text-white focus:outline-none focus:border-emerald-500 text-center"
+											class="w-full bg-white border-2 border-black px-4 py-3 text-2xl font-black text-black focus:outline-none text-center"
 										/>
-										<span class="absolute right-4 top-3 text-sm font-semibold text-slate-400">
+										<span class="absolute right-4 top-4 text-sm font-black text-black">
 											Kč
 										</span>
 									</div>
@@ -486,14 +472,14 @@
 								<button
 									type="submit"
 									disabled={isSubmitting}
-									class="w-full py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 active:scale-98 text-white font-bold text-sm transition-colors shadow-lg shadow-emerald-950 disabled:opacity-50 cursor-pointer flex items-center justify-center gap-2"
+									class="w-full py-3.5 bg-black text-white hover:bg-neutral-800 active:bg-neutral-900 font-black text-sm uppercase tracking-wider border-2 border-black transition-colors disabled:opacity-50 cursor-pointer flex items-center justify-center gap-2"
 								>
 									{#if isSubmitting}
 										<RefreshCw class="w-4 h-4 animate-spin" />
-										<span>Ukládám a komprimuji...</span>
+										<span>UKLÁDÁM...</span>
 									{:else}
 										<Check class="w-5 h-5" />
-										<span>Vystavit k prodeji</span>
+										<span>VYSTAVIT K PRODEJI</span>
 									{/if}
 								</button>
 							</form>

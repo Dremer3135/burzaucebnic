@@ -1,28 +1,27 @@
 <script lang="ts">
-	import { onMount, onDestroy } from 'svelte';
+	import { onDestroy } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { auth, eventStore } from '$lib/stores.svelte';
 	import { pb, getBookThumbnailUrl } from '$lib/pocketbase';
-	import { scanFrameForDataMatrix } from '$lib/scanner';
+	import { scanFrameForDataMatrix, CAMERA_CONSTRAINTS } from '$lib/scanner';
 	import { renderSpaydQRCode } from '$lib/barcodes';
 	import {
-		Camera,
 		Scan,
-		CreditCard,
 		Banknote,
+		CreditCard,
 		CheckCircle2,
 		AlertCircle,
+		Receipt,
 		RefreshCw,
-		ArrowRight,
-		User,
-		Receipt
+		User
 	} from '@lucide/svelte';
+	import type { Book } from '$lib/types';
 
 	interface BuyerCartData {
-		buyer: { id: string; name?: string; email: string };
-		books: Array<{ id: string; code: string; price: number; photo: string }>;
+		buyer: { id: string; name: string; email: string };
+		books: Book[];
 		totalAmount: number;
-		event?: any;
+		event: any;
 	}
 
 	let videoElement = $state<HTMLVideoElement | null>(null);
@@ -32,33 +31,27 @@
 
 	let isScanning = $state(true);
 	let scannedBuyerId = $state<string | null>(null);
-	let cartData = $state<BuyerCartData | null>(null);
 	let isLoadingCart = $state(false);
-	let errorMessage = $state('');
+	let cartData = $state<BuyerCartData | null>(null);
 
-	// Payment flow: null | 'QR' | 'CASH' | 'SUCCESS'
-	let paymentMode = $state<'QR' | 'CASH' | 'SUCCESS' | null>(null);
+	// Modes: null (cart preview) | 'QR' (waiting for payment) | 'SUCCESS' (completed)
+	let paymentMode = $state<'QR' | 'SUCCESS' | null>(null);
 	let isProcessingPayment = $state(false);
+	let errorMessage = $state('');
 	let successMessage = $state('');
 
-	// QR Canvas
-	let qrCanvas = $state<HTMLCanvasElement | null>(null);
+	// Active payment details
 	let currentPaymentInfo = $state<{
 		id: string;
 		variableSymbol: number;
 		totalAmount: number;
 		iban: string;
 	} | null>(null);
+	let qrCanvas = $state<HTMLCanvasElement | null>(null);
 
 	$effect(() => {
 		if (auth.user && !auth.isCashier) {
 			goto('/');
-		}
-	});
-
-	onMount(() => {
-		if (auth.isCashier) {
-			startScanner();
 		}
 	});
 
@@ -75,9 +68,7 @@
 		scannedBuyerId = null;
 
 		try {
-			const stream = await navigator.mediaDevices.getUserMedia({
-				video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } }
-			});
+			const stream = await navigator.mediaDevices.getUserMedia(CAMERA_CONSTRAINTS);
 			mediaStream = stream;
 			if (videoElement) {
 				videoElement.srcObject = stream;
@@ -131,7 +122,6 @@
 		scanAnimationId = requestAnimationFrame(runScanLoop);
 	}
 
-
 	async function loadBuyerCart(buyerId: string) {
 		isLoadingCart = true;
 		errorMessage = '';
@@ -158,7 +148,7 @@
 		errorMessage = '';
 		try {
 			const bookIds = cartData.books.map((b) => b.id);
-			const res = await pb.send('/api/cashier/confirm-cash', {
+			await pb.send('/api/cashier/confirm-cash', {
 				method: 'POST',
 				body: {
 					buyerId: scannedBuyerId,
@@ -220,22 +210,22 @@
 	}
 </script>
 
-<div class="flex-1 max-w-2xl w-full mx-auto p-4 flex flex-col pb-20">
-	<!-- Top Navigation Bar between Scanner and Payments -->
-	<div class="flex items-center justify-between bg-slate-800/80 p-1.5 rounded-2xl border border-slate-700/80 mb-6 backdrop-blur">
+<div class="flex-1 max-w-2xl w-full mx-auto p-4 flex flex-col pb-24 bg-white text-black">
+	<!-- Top Navigation Bar -->
+	<div class="flex items-center justify-between bg-white border-2 border-black p-1 mb-6 text-black">
 		<a
 			href="/cashier"
-			class="flex-1 py-2 px-3 rounded-xl text-center text-xs font-bold transition-all bg-emerald-600 text-white shadow-sm flex items-center justify-center gap-1.5"
+			class="flex-1 py-2.5 px-3 text-center text-xs font-black uppercase tracking-wider transition-all bg-black text-white flex items-center justify-center gap-1.5"
 		>
 			<Scan class="w-4 h-4" />
-			Pokladní skener
+			POKLADNÍ SKENER
 		</a>
 		<a
 			href="/cashier/payments"
-			class="flex-1 py-2 px-3 rounded-xl text-center text-xs font-semibold text-slate-400 hover:text-slate-200 transition-all flex items-center justify-center gap-1.5"
+			class="flex-1 py-2.5 px-3 text-center text-xs font-black uppercase tracking-wider text-black hover:bg-neutral-100 transition-all flex items-center justify-center gap-1.5"
 		>
 			<Receipt class="w-4 h-4" />
-			Bankovní platby
+			BANKOVNÍ PLATBY
 		</a>
 	</div>
 
@@ -243,14 +233,14 @@
 	{#if isScanning}
 		<div class="flex-1 flex flex-col items-center">
 			<div class="text-center mb-4">
-				<h1 class="text-xl font-bold text-white mb-1">Skenování kódu zákazníka</h1>
-				<p class="text-xs text-slate-400">
-					Namiřte kameru na velký kód Data Matrix na mobilu zákazníka
+				<h1 class="text-2xl font-black uppercase tracking-tight text-black mb-1">SKENOVÁNÍ KÓDU ZÁKAZNÍKA</h1>
+				<p class="text-xs font-bold text-neutral-600 uppercase">
+					Namiřte kameru na kód na mobilu zákazníka
 				</p>
 			</div>
 
 			<!-- Camera Viewport -->
-			<div class="relative w-full max-w-sm aspect-square bg-black rounded-3xl overflow-hidden border-2 border-slate-700 shadow-2xl flex items-center justify-center">
+			<div class="relative w-full max-w-sm aspect-square bg-black border-4 border-black overflow-hidden flex items-center justify-center">
 				<video
 					bind:this={videoElement}
 					playsinline
@@ -262,19 +252,17 @@
 
 				<!-- Target Guide Box -->
 				<div class="absolute inset-0 pointer-events-none flex items-center justify-center p-8">
-					<div class="w-48 h-48 border-2 border-emerald-400 rounded-2xl relative animate-pulse flex items-center justify-center">
-						<div class="absolute inset-0 bg-emerald-500/10 rounded-2xl"></div>
-						<div class="absolute -top-1 -left-1 w-6 h-6 border-t-4 border-l-4 border-emerald-400 rounded-tl-lg"></div>
-						<div class="absolute -top-1 -right-1 w-6 h-6 border-t-4 border-r-4 border-emerald-400 rounded-tr-lg"></div>
-						<div class="absolute -bottom-1 -left-1 w-6 h-6 border-b-4 border-l-4 border-emerald-400 rounded-bl-lg"></div>
-						<div class="absolute -bottom-1 -right-1 w-6 h-6 border-b-4 border-r-4 border-emerald-400 rounded-br-lg"></div>
+					<div class="w-48 h-48 border-4 border-white relative flex items-center justify-center">
+						<span class="text-xs font-black uppercase text-black bg-white px-2 py-0.5 border-2 border-black">
+							Zaměřte kód
+						</span>
 					</div>
 				</div>
 			</div>
 
-			<!-- Or Manual Buyer ID Entry for Testing -->
-			<div class="mt-6 w-full max-w-sm bg-slate-800/60 p-3 rounded-xl border border-slate-700/60 text-center">
-				<p class="text-[11px] text-slate-400 mb-2">Nebo zadejte ID zákazníka ručně:</p>
+			<!-- Manual Buyer ID Entry -->
+			<div class="mt-6 w-full max-w-sm bg-neutral-50 p-4 border-2 border-black text-center">
+				<p class="text-xs font-black uppercase text-neutral-600 mb-2">NEBO ZADEJTE ID ZÁKAZNÍKA RUČNĚ:</p>
 				<form
 					onsubmit={(e) => {
 						e.preventDefault();
@@ -291,37 +279,37 @@
 					<input
 						name="manualId"
 						type="text"
-						placeholder="Např. ID kupujícího"
-						class="flex-1 bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-white"
+						placeholder="ID kupujícího"
+						class="flex-1 bg-white border-2 border-black px-3 py-2 text-xs font-black uppercase text-black"
 					/>
 					<button
 						type="submit"
-						class="py-1.5 px-3 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-bold"
+						class="py-2 px-4 bg-black text-white hover:bg-neutral-800 text-xs font-black uppercase tracking-wider border-2 border-black cursor-pointer"
 					>
-						Načíst
+						NAČÍST
 					</button>
 				</form>
 			</div>
 		</div>
 	{:else if isLoadingCart}
 		<div class="flex-1 flex flex-col items-center justify-center py-20">
-			<RefreshCw class="w-8 h-8 animate-spin text-emerald-400 mb-3" />
-			<p class="text-xs text-slate-300">Načítám košík zákazníka...</p>
+			<RefreshCw class="w-8 h-8 animate-spin text-black mb-3" />
+			<p class="text-xs font-black uppercase tracking-wider text-black">Načítám košík zákazníka...</p>
 		</div>
 	{:else if cartData && paymentMode === null}
 		<!-- CART SUMMARY & PAYMENT METHOD CHOICE -->
-		<div class="bg-slate-800/90 border border-slate-700 rounded-3xl p-5 shadow-2xl backdrop-blur">
+		<div class="bg-white border-4 border-black p-6 text-black">
 			<!-- Buyer Info Header -->
-			<div class="flex items-center justify-between pb-4 border-b border-slate-700/80 mb-4">
-				<div class="flex items-center gap-2.5">
-					<div class="p-2 bg-emerald-500/10 text-emerald-400 rounded-xl">
+			<div class="flex items-center justify-between pb-4 border-b-2 border-black mb-4">
+				<div class="flex items-center gap-3">
+					<div class="p-2.5 bg-neutral-100 border-2 border-black text-black">
 						<User class="w-5 h-5" />
 					</div>
 					<div>
-						<div class="text-sm font-bold text-white">
+						<div class="text-base font-black uppercase text-black">
 							{cartData.buyer.name || 'Zákazník'}
 						</div>
-						<div class="text-[11px] text-slate-400 font-mono">
+						<div class="text-xs text-neutral-600 font-mono font-bold">
 							{cartData.buyer.email} ({cartData.buyer.id})
 						</div>
 					</div>
@@ -329,18 +317,18 @@
 
 				<button
 					onclick={startScanner}
-					class="text-xs text-slate-400 hover:text-white px-2.5 py-1.5 rounded-lg bg-slate-700/50"
+					class="text-xs font-black uppercase text-black border-2 border-black px-3 py-1.5 hover:bg-neutral-100 cursor-pointer"
 				>
-					Skenovat znovu
+					SKENOVAT ZNOVU
 				</button>
 			</div>
 
 			<!-- Books List -->
 			<div class="space-y-2 mb-6 max-h-64 overflow-y-auto pr-1">
 				{#each cartData.books as book}
-					<div class="flex items-center justify-between p-2.5 rounded-xl bg-slate-900/60 border border-slate-800 text-xs">
-						<div class="flex items-center gap-2 min-w-0">
-							<div class="w-8 h-10 rounded bg-slate-800 overflow-hidden shrink-0">
+					<div class="flex items-center justify-between p-3 border-2 border-black bg-neutral-50 text-xs">
+						<div class="flex items-center gap-2.5 min-w-0">
+							<div class="w-10 h-12 border border-black bg-white overflow-hidden shrink-0">
 								{#if book.photo}
 									<img
 										src={getBookThumbnailUrl(book)}
@@ -349,9 +337,9 @@
 									/>
 								{/if}
 							</div>
-							<span class="font-medium text-slate-200 truncate">{book.code}</span>
+							<span class="font-black uppercase text-black truncate">{book.code}</span>
 						</div>
-						<div class="font-bold text-emerald-400 text-sm shrink-0 ml-2">
+						<div class="font-black text-black text-base shrink-0 ml-2">
 							{book.price} Kč
 						</div>
 					</div>
@@ -359,14 +347,14 @@
 			</div>
 
 			<!-- Total Price -->
-			<div class="flex items-center justify-between p-4 rounded-2xl bg-emerald-950/40 border border-emerald-500/30 mb-6">
-				<span class="text-sm text-slate-300 font-medium">Celkem k úhradě:</span>
-				<span class="text-2xl font-black text-emerald-400">{cartData.totalAmount} Kč</span>
+			<div class="flex items-center justify-between p-4 border-4 border-black bg-neutral-100 mb-6">
+				<span class="text-sm font-black uppercase text-black">CELKEM K ÚHRADĚ:</span>
+				<span class="text-3xl font-black text-black">{cartData.totalAmount} Kč</span>
 			</div>
 
 			{#if errorMessage}
-				<div class="mb-4 p-3 bg-rose-500/15 border border-rose-500/30 text-rose-300 text-xs rounded-xl flex items-center gap-2">
-					<AlertCircle class="w-4 h-4 shrink-0" />
+				<div class="mb-4 p-3 bg-red-50 border-2 border-red-600 text-red-700 text-xs font-bold flex items-center gap-2">
+					<AlertCircle class="w-4 h-4 shrink-0 text-red-600" />
 					<span>{errorMessage}</span>
 				</div>
 			{/if}
@@ -376,89 +364,89 @@
 				<button
 					onclick={handleGenerateQRPayment}
 					disabled={isProcessingPayment}
-					class="py-3.5 px-4 rounded-xl bg-blue-600 hover:bg-blue-500 active:scale-95 text-white font-bold text-sm transition-all shadow-lg flex items-center justify-center gap-2 cursor-pointer"
+					class="py-4 px-4 bg-white text-black hover:bg-neutral-100 active:bg-neutral-200 font-black text-sm uppercase tracking-wider border-4 border-black transition-all flex items-center justify-center gap-2 cursor-pointer"
 				>
 					<CreditCard class="w-5 h-5" />
-					<span>Zaplatit QR kódem</span>
+					<span>ZAPLATIT QR KÓDEM</span>
 				</button>
 
 				<button
 					onclick={handleConfirmCash}
 					disabled={isProcessingPayment}
-					class="py-3.5 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-500 active:scale-95 text-white font-bold text-sm transition-all shadow-lg flex items-center justify-center gap-2 cursor-pointer"
+					class="py-4 px-4 bg-black text-white hover:bg-neutral-800 active:bg-neutral-900 font-black text-sm uppercase tracking-wider border-4 border-black transition-all flex items-center justify-center gap-2 cursor-pointer"
 				>
 					<Banknote class="w-5 h-5" />
-					<span>Zaplatit hotově</span>
+					<span>ZAPLATIT HOTOVĚ</span>
 				</button>
 			</div>
 		</div>
 	{:else if paymentMode === 'QR' && currentPaymentInfo}
 		<!-- QR PAYMENT DISPLAY -->
-		<div class="bg-slate-800/90 border border-slate-700 rounded-3xl p-6 shadow-2xl backdrop-blur text-center">
-			<h2 class="text-lg font-bold text-white mb-1">QR Platba (Převod na účet)</h2>
-			<p class="text-xs text-slate-400 mb-4">
-				Ukažte tento QR kód zákazníkovi k načtení v bankovní aplikaci
+		<div class="bg-white border-4 border-black p-6 text-center text-black">
+			<h2 class="text-2xl font-black uppercase tracking-tight text-black mb-1">QR PLATBA</h2>
+			<p class="text-xs font-bold text-neutral-600 uppercase mb-4">
+				Ukažte tento QR kód zákazníkovi k načtení v bance
 			</p>
 
 			<!-- QR Code Canvas -->
-			<div class="bg-white p-3.5 rounded-2xl inline-block shadow-2xl mx-auto mb-4">
+			<div class="bg-white p-4 border-4 border-black inline-block mx-auto mb-4">
 				<canvas bind:this={qrCanvas} class="max-w-full h-auto"></canvas>
 			</div>
 
 			<!-- Payment Details -->
-			<div class="bg-slate-900/80 rounded-xl p-3.5 text-xs text-left max-w-sm mx-auto space-y-1.5 border border-slate-800 mb-6">
-				<div class="flex justify-between">
-					<span class="text-slate-400">Částka:</span>
-					<span class="font-bold text-emerald-400 text-sm">{currentPaymentInfo.totalAmount} Kč</span>
+			<div class="bg-neutral-50 border-2 border-black p-4 text-xs text-left max-w-sm mx-auto space-y-2 mb-6">
+				<div class="flex justify-between border-b border-neutral-300 pb-1">
+					<span class="font-bold text-neutral-600 uppercase">ČÁSTKA:</span>
+					<span class="font-black text-black text-base">{currentPaymentInfo.totalAmount} Kč</span>
 				</div>
-				<div class="flex justify-between">
-					<span class="text-slate-400">Variabilní symbol:</span>
-					<span class="font-mono font-bold text-white bg-slate-800 px-2 py-0.5 rounded">
+				<div class="flex justify-between border-b border-neutral-300 pb-1">
+					<span class="font-bold text-neutral-600 uppercase">VARIABILNÍ SYMBOL:</span>
+					<span class="font-mono font-black text-black text-sm">
 						{currentPaymentInfo.variableSymbol}
 					</span>
 				</div>
-				<div class="flex justify-between">
-					<span class="text-slate-400">Účet (IBAN):</span>
-					<span class="font-mono text-slate-300">{currentPaymentInfo.iban}</span>
+				<div class="flex justify-between border-b border-neutral-300 pb-1">
+					<span class="font-bold text-neutral-600 uppercase">ÚČET (IBAN):</span>
+					<span class="font-mono font-bold text-black">{currentPaymentInfo.iban}</span>
 				</div>
 				<div class="flex justify-between">
-					<span class="text-slate-400">Zpráva pro příjemce (ID):</span>
-					<span class="font-mono text-slate-400 text-[10px]">{currentPaymentInfo.id}</span>
+					<span class="font-bold text-neutral-600 uppercase">ID PLATBY:</span>
+					<span class="font-mono text-neutral-600 text-[10px]">{currentPaymentInfo.id}</span>
 				</div>
 			</div>
 
 			<div class="flex gap-2 max-w-sm mx-auto">
 				<a
 					href="/cashier/payments"
-					class="flex-1 py-3 px-4 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs transition-colors flex items-center justify-center gap-1.5 shadow"
+					class="flex-1 py-3 px-4 bg-white hover:bg-neutral-100 text-black font-black text-xs uppercase tracking-wider border-2 border-black flex items-center justify-center gap-1.5 transition-colors"
 				>
 					<Receipt class="w-4 h-4" />
-					Ověřit v přehledu plateb
+					PŘEHLED PLATEB
 				</a>
 				<button
 					onclick={startScanner}
-					class="flex-1 py-3 px-4 rounded-xl bg-slate-700 hover:bg-slate-600 text-slate-200 font-medium text-xs transition-colors cursor-pointer"
+					class="flex-1 py-3 px-4 bg-black hover:bg-neutral-800 text-white font-black text-xs uppercase tracking-wider border-2 border-black transition-colors cursor-pointer"
 				>
-					Další zákazník
+					DALŠÍ ZÁKAZNÍK
 				</button>
 			</div>
 		</div>
 	{:else if paymentMode === 'SUCCESS'}
 		<!-- CASH PAYMENT SUCCESS -->
-		<div class="bg-slate-800/90 border border-emerald-500/50 rounded-3xl p-8 shadow-2xl backdrop-blur text-center">
-			<div class="inline-flex p-4 bg-emerald-500/15 text-emerald-400 rounded-full mb-4">
-				<CheckCircle2 class="w-12 h-12" />
+		<div class="bg-white border-4 border-black p-8 text-center text-black">
+			<div class="inline-flex p-4 bg-neutral-100 border-2 border-black mb-4">
+				<CheckCircle2 class="w-12 h-12 text-black" />
 			</div>
-			<h2 class="text-xl font-bold text-white mb-2">Platba dokončena!</h2>
-			<p class="text-xs text-slate-300 max-w-sm mx-auto mb-6">
+			<h2 class="text-2xl font-black uppercase tracking-tight text-black mb-2">PLATBA DOKONČENA!</h2>
+			<p class="text-xs font-bold text-neutral-600 uppercase max-w-sm mx-auto mb-6">
 				{successMessage}
 			</p>
 
 			<button
 				onclick={startScanner}
-				class="w-full max-w-xs py-3.5 px-6 rounded-xl bg-emerald-600 hover:bg-emerald-500 active:scale-95 text-white font-bold text-sm transition-all shadow-lg shadow-emerald-950 mx-auto cursor-pointer"
+				class="w-full max-w-xs py-4 px-6 bg-black hover:bg-neutral-800 text-white font-black text-sm uppercase tracking-wider border-2 border-black mx-auto cursor-pointer"
 			>
-				Skenovat dalšího zákazníka
+				SKENOVAT DALŠÍHO ZÁKAZNÍKA
 			</button>
 		</div>
 	{/if}

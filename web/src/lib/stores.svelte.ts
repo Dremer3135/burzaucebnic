@@ -8,27 +8,38 @@ class AuthStore {
 	user = $state<User | null>(pb.authStore.model as unknown as User | null);
 	isCashier = $derived(this.user?.isCashier ?? false);
 	private unsubUser: (() => void) | null = null;
+	private currentSubscribedUserId: string | null = null;
 
 	constructor() {
 		if (typeof window !== 'undefined') {
 			pb.authStore.onChange(() => {
-				this.user = pb.authStore.model as unknown as User | null;
-				this.setupUserSubscription();
+				const newUser = pb.authStore.model as unknown as User | null;
+				if (this.user?.id !== newUser?.id) {
+					this.user = newUser;
+					this.setupUserSubscription();
+				}
 			});
 			this.setupUserSubscription();
 		}
 	}
 
 	private async setupUserSubscription() {
+		if (this.currentSubscribedUserId === this.user?.id && this.unsubUser) {
+			return;
+		}
+
 		if (this.unsubUser) {
 			this.unsubUser();
 			this.unsubUser = null;
+			this.currentSubscribedUserId = null;
 		}
 
 		if (this.user?.id) {
+			const targetId = this.user.id;
+			this.currentSubscribedUserId = targetId;
 			try {
-				this.unsubUser = await pb.collection('users').subscribe<User>(this.user.id, (e) => {
-					if (e.action === 'update') {
+				this.unsubUser = await pb.collection('users').subscribe<User>(targetId, (e) => {
+					if (e.action === 'update' && e.record.id === this.user?.id) {
 						this.user = e.record;
 					}
 				});
@@ -41,12 +52,14 @@ class AuthStore {
 	async loginWithPassword(email: string, pass: string) {
 		const res = await pb.collection('users').authWithPassword(email, pass);
 		this.user = res.record as unknown as User;
+		this.setupUserSubscription();
 		return this.user;
 	}
 
 	async loginWithGoogle() {
 		const res = await pb.collection('users').authWithOAuth2({ provider: 'google' });
 		this.user = res.record as unknown as User;
+		this.setupUserSubscription();
 		return this.user;
 	}
 
@@ -54,6 +67,7 @@ class AuthStore {
 		if (this.unsubUser) {
 			this.unsubUser();
 			this.unsubUser = null;
+			this.currentSubscribedUserId = null;
 		}
 		pb.authStore.clear();
 		this.user = null;
@@ -139,9 +153,11 @@ class SellerBooksStore {
 	isLoading = $state(false);
 	private unsub: (() => void) | null = null;
 	private currentUserId: string | null = null;
+	private isInitialized = false;
 
 	async init(userId: string) {
-		if (this.currentUserId === userId && this.books.length > 0) return;
+		if (this.isInitialized && this.currentUserId === userId) return;
+		this.isInitialized = true;
 		this.currentUserId = userId;
 		await this.refresh();
 		this.subscribe();
@@ -201,6 +217,7 @@ class SellerBooksStore {
 		}
 		this.books = [];
 		this.currentUserId = null;
+		this.isInitialized = false;
 	}
 }
 
@@ -213,8 +230,11 @@ class CashierPaymentsStore {
 	payments = $state<Payment[]>([]);
 	isLoading = $state(false);
 	private unsub: (() => void) | null = null;
+	private isInitialized = false;
 
 	async init() {
+		if (this.isInitialized) return;
+		this.isInitialized = true;
 		await this.refresh();
 		this.subscribe();
 	}
@@ -271,6 +291,7 @@ class CashierPaymentsStore {
 			this.unsub = null;
 		}
 		this.payments = [];
+		this.isInitialized = false;
 	}
 }
 
