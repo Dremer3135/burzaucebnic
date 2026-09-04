@@ -344,13 +344,22 @@ export function drawPricePolygon(
 	if (angle < -Math.PI / 2) angle += Math.PI;
 
 	// Text size scaled to fit polygon (approx 28% of min dimension)
-	const fontSize = Math.max(12, Math.min(54, Math.floor(minDim * 0.28)));
+	let fontSize = Math.max(10, Math.min(54, Math.floor(minDim * 0.28)));
 
 	ctx.translate(centerX, centerY);
 	ctx.rotate(angle);
 
 	ctx.fillStyle = color.text;
 	ctx.font = `900 ${fontSize}px ui-sans-serif, system-ui, -apple-system, sans-serif`;
+
+	// Clamp text size if it exceeds polygon width
+	const textWidth = ctx.measureText(priceText).width;
+	const maxTextWidth = avgWidth * 0.82;
+	if (textWidth > maxTextWidth && textWidth > 0) {
+		fontSize = Math.max(8, Math.floor(fontSize * (maxTextWidth / textWidth)));
+		ctx.font = `900 ${fontSize}px ui-sans-serif, system-ui, -apple-system, sans-serif`;
+	}
+
 	ctx.textAlign = 'center';
 	ctx.textBaseline = 'middle';
 	ctx.fillText(priceText, 0, 0);

@@ -9,7 +9,7 @@
 		type ScanMatch
 	} from '$lib/scanner';
 	import { renderDataMatrix } from '$lib/barcodes';
-	import { Camera, RefreshCw, AlertCircle, X, User } from '@lucide/svelte';
+	import { RefreshCw, AlertCircle, X } from '@lucide/svelte';
 
 	let videoElement = $state<HTMLVideoElement | null>(null);
 	let captureCanvas = $state<HTMLCanvasElement | null>(null);
@@ -205,16 +205,6 @@
 		class="absolute inset-0 pointer-events-none w-full h-full"
 	></canvas>
 
-	<!-- Top instruction overlay badge -->
-	{#if isCameraReady && !cameraError}
-		<div class="absolute top-4 inset-x-0 flex justify-center pointer-events-none z-10 px-4">
-			<div class="bg-white/95 text-black border-2 border-black px-4 py-2 text-xs font-black uppercase tracking-wider shadow-none flex items-center gap-2">
-				<Camera class="w-4 h-4 text-black" />
-				<span>Namiřte kameru na samolepky učebnic</span>
-			</div>
-		</div>
-	{/if}
-
 	<!-- Camera Error State -->
 	{#if cameraError}
 		<div class="absolute inset-0 bg-white flex flex-col items-center justify-center p-6 text-center z-20">
@@ -257,52 +247,33 @@
 		<div
 			class="fixed inset-0 bg-black/80 backdrop-blur-xs flex items-center justify-center p-4 z-50 select-text"
 			role="dialog"
+			tabindex="-1"
 			aria-modal="true"
+			onkeydown={(e) => { if (e.key === 'Escape') isUserCodeModalOpen = false; }}
 		>
-			<div class="bg-white border-4 border-black p-6 max-w-sm w-full relative text-center text-black shadow-[6px_6px_0px_0px_rgba(0,0,0,1)]">
+			<!-- Backdrop click to dismiss -->
+			<div
+				class="fixed inset-0"
+				onclick={() => (isUserCodeModalOpen = false)}
+				role="presentation"
+			></div>
+
+			<div
+				class="bg-white border-4 border-black p-6 relative flex items-center justify-center text-black shadow-[6px_6px_0px_0px_rgba(0,0,0,1)] z-10"
+			>
 				<button
+					type="button"
 					onclick={() => (isUserCodeModalOpen = false)}
-					class="absolute top-3 right-3 p-1.5 border-2 border-black bg-white hover:bg-neutral-100 text-black cursor-pointer"
+					class="absolute top-2 right-2 p-1.5 border-2 border-black bg-white hover:bg-neutral-100 text-black cursor-pointer z-10"
 					aria-label="Zavřít"
 				>
 					<X class="w-5 h-5" />
 				</button>
 
-				<div class="inline-flex p-2.5 bg-neutral-100 border-2 border-black mb-3">
-					<User class="w-6 h-6 text-black" />
-				</div>
-
-				<h2 class="text-lg font-black uppercase tracking-tight mb-1">MŮJ KÓD ZÁKAZNÍKA</h2>
-				<p class="text-xs font-bold text-neutral-600 uppercase mb-4">
-					Ukažte tento kód pokladnímu pro přiřazení nákupu
-				</p>
-
 				<!-- High-contrast Data Matrix Canvas -->
-				<div class="bg-white p-3 border-4 border-black inline-block mx-auto mb-4">
-					<canvas bind:this={modalCodeCanvas} class="w-52 h-52"></canvas>
+				<div class="bg-white p-2">
+					<canvas bind:this={modalCodeCanvas} class="w-64 h-64 sm:w-72 sm:h-72"></canvas>
 				</div>
-
-				<div class="bg-neutral-50 border-2 border-black p-3 text-xs text-left mb-4 space-y-1 font-mono">
-					<div class="truncate">
-						<span class="font-bold font-sans text-neutral-500 text-[10px] uppercase">JMÉNO: </span>
-						<span class="font-bold">{auth.user.name || 'Zákazník'}</span>
-					</div>
-					<div class="truncate">
-						<span class="font-bold font-sans text-neutral-500 text-[10px] uppercase">EMAIL: </span>
-						<span class="font-bold">{auth.user.email}</span>
-					</div>
-					<div class="truncate">
-						<span class="font-bold font-sans text-neutral-500 text-[10px] uppercase">ID: </span>
-						<span class="font-black text-black">{auth.user.id}</span>
-					</div>
-				</div>
-
-				<button
-					onclick={() => (isUserCodeModalOpen = false)}
-					class="w-full py-3 bg-black hover:bg-neutral-800 text-white font-black text-xs uppercase tracking-wider border-2 border-black cursor-pointer"
-				>
-					ZAVŘÍT
-				</button>
 			</div>
 		</div>
 	{/if}

@@ -423,23 +423,30 @@
 	}
 </script>
 
-<div class="flex-1 max-w-4xl w-full mx-auto p-4 flex flex-col pb-28 bg-white text-black overflow-y-auto">
+<div class="flex-1 max-w-4xl w-full mx-auto p-3 sm:p-4 flex flex-col pb-24 bg-white text-black overflow-y-auto">
 	<!-- Page Header -->
 	<div class="flex items-center justify-between mb-4 border-b-2 border-black pb-3">
-		<div>
-			<h1 class="text-2xl font-black uppercase tracking-tight text-black">MOJE UČEBNICE K PRODEJI</h1>
-			<p class="text-xs font-bold text-neutral-600 uppercase">
-				Přehled vámi nabízených učebnic a jejich aktuální stav
-			</p>
-		</div>
+		<h1 class="text-lg sm:text-xl font-black uppercase tracking-tight text-black">
+			Moje knihy ({sellerBooks.books.length})
+		</h1>
 
-		<button
-			onclick={() => sellerBooks.refresh()}
-			class="p-2.5 bg-white text-black hover:bg-neutral-100 border-2 border-black transition-colors cursor-pointer"
-			title="Obnovit"
-		>
-			<RefreshCw class="w-4 h-4 {sellerBooks.isLoading ? 'animate-spin' : ''}" />
-		</button>
+		<div class="flex items-center gap-2">
+			<button
+				onclick={() => sellerBooks.refresh()}
+				class="p-2 bg-white text-black hover:bg-neutral-100 border-2 border-black transition-colors cursor-pointer"
+				title="Obnovit"
+			>
+				<RefreshCw class="w-4 h-4 {sellerBooks.isLoading ? 'animate-spin' : ''}" />
+			</button>
+
+			<button
+				onclick={openSellModal}
+				class="py-2 px-3 bg-black text-white hover:bg-neutral-800 font-black text-xs uppercase tracking-wider border-2 border-black flex items-center gap-1.5 cursor-pointer active:scale-95 transition-transform"
+			>
+				<Plus class="w-4 h-4" />
+				<span>PŘIDAT</span>
+			</button>
+		</div>
 	</div>
 
 	<!-- Books List -->
@@ -448,34 +455,20 @@
 			<RefreshCw class="w-8 h-8 animate-spin text-black" />
 		</div>
 	{:else if sellerBooks.books.length === 0}
-		<div class="flex-1 flex flex-col items-center justify-center p-8 bg-neutral-50 border-2 border-dashed border-black text-center my-6">
-			<div class="p-4 bg-white border-2 border-black mb-3">
-				<Tag class="w-8 h-8 text-black" />
-			</div>
-			<h3 class="text-lg font-black uppercase tracking-tight text-black mb-1">Žádné učebnice k prodeji</h3>
-			<p class="text-xs font-bold text-neutral-600 uppercase max-w-xs mb-6">
-				Klepněte na tlačítko níže pro naskenování kódu a přidání první učebnice.
-			</p>
-			<button
-				onclick={openSellModal}
-				class="inline-flex items-center gap-2 py-3 px-6 bg-black text-white font-black text-sm uppercase tracking-wider hover:bg-neutral-800 active:bg-neutral-900 border-2 border-black transition-colors cursor-pointer"
-			>
-				<Plus class="w-5 h-5" />
-				PŘIDAT UČEBNICI DO PRODEJE
-			</button>
+		<div class="flex-1 flex flex-col items-center justify-center py-16 text-center">
+			<Tag class="w-10 h-10 text-neutral-300 mb-3" />
+			<p class="text-sm font-black uppercase tracking-tight text-neutral-500">Zatím žádné učebnice</p>
 		</div>
 	{:else}
 		<div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
 			{#each sellerBooks.books as book (book.id)}
 				{@const badge = getStatusBadge(book.status)}
-				<div
-					class="bg-white border-2 border-black p-3 flex gap-3 text-black transition-all"
-				>
+				<div class="bg-white border-2 border-black p-3 flex gap-3 text-black transition-all">
 					<!-- Thumbnail -->
 					<button
 						type="button"
 						onclick={() => (selectedPreviewBook = book)}
-						class="w-20 h-28 shrink-0 border-2 border-black overflow-hidden bg-neutral-100 relative group cursor-pointer"
+						class="w-16 h-22 sm:w-20 sm:h-28 shrink-0 border-2 border-black overflow-hidden bg-neutral-100 relative group cursor-pointer"
 					>
 						{#if book.photo}
 							<img
@@ -485,7 +478,7 @@
 							/>
 						{:else}
 							<div class="w-full h-full flex items-center justify-center text-neutral-400">
-								<Camera class="w-6 h-6" />
+								<Camera class="w-5 h-5" />
 							</div>
 						{/if}
 						<div class="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-[10px] text-white font-black uppercase">
@@ -494,20 +487,17 @@
 					</button>
 
 					<!-- Info -->
-					<div class="flex-1 flex flex-col justify-between py-0.5">
+					<div class="flex-1 flex flex-col justify-between py-0.5 min-w-0">
 						<div>
-							<div class="flex items-center justify-between gap-1 mb-1.5">
-								<span class="text-xs font-black text-black truncate uppercase" title={book.id}>
-									{book.id}
-								</span>
-							</div>
-
 							<div class="text-xl font-black text-black">
 								{book.price} Kč
 							</div>
+							<div class="text-[10px] font-mono text-neutral-400 truncate mt-0.5" title={book.id}>
+								#{book.id}
+							</div>
 						</div>
 
-						<div class="mt-2 flex items-center justify-between">
+						<div class="mt-2 flex items-center">
 							<span class="text-[10px] font-black px-2 py-0.5 border-2 {badge.cls}">
 								{badge.label}
 							</span>
@@ -519,13 +509,16 @@
 	{/if}
 
 	<!-- Plus FAB at Bottom Right -->
-	<button
-		onclick={openSellModal}
-		class="fixed bottom-6 right-6 z-30 w-16 h-16 bg-black text-white border-4 border-black hover:bg-neutral-800 active:bg-neutral-900 flex items-center justify-center transition-all cursor-pointer"
-		title="Přidat učebnici k prodeji"
-	>
-		<Plus class="w-8 h-8 stroke-[3]" />
-	</button>
+	{#if sellerBooks.books.length > 0}
+		<button
+			onclick={openSellModal}
+			class="fixed bottom-6 right-6 z-30 w-14 h-14 bg-black text-white border-2 border-black shadow-[3px_3px_0px_0px_rgba(0,0,0,1)] hover:bg-neutral-800 active:scale-95 flex items-center justify-center transition-transform cursor-pointer"
+			title="Přidat učebnici"
+			aria-label="Přidat učebnici"
+		>
+			<Plus class="w-7 h-7" />
+		</button>
+	{/if}
 </div>
 
 <!-- FULL-RES IMAGE MODAL -->

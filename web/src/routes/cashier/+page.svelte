@@ -24,6 +24,7 @@
 		X,
 		ChevronUp,
 		ChevronDown,
+		ChevronLeft,
 		ZoomIn,
 		Check,
 		Camera,
@@ -342,7 +343,9 @@
 
 						// 2. Is it the current buyer?
 						if (currentBuyer && currentBuyer.id === code) {
-							drawPricePolygon(ctx, match.position, `✓ ${currentBuyer.name || 'ZÁKAZNÍK'}`, transform, {
+							const rawName = currentBuyer.name || 'ZÁKAZNÍK';
+							const displayName = rawName.length > 10 ? rawName.slice(0, 9) + '…' : rawName;
+							drawPricePolygon(ctx, match.position, `✓ ${displayName}`, transform, {
 								bg: '#059669',
 								border: '#047857',
 								text: '#ffffff',
@@ -732,23 +735,47 @@
 </script>
 
 <div class="relative flex-1 w-full h-full bg-black overflow-hidden flex flex-col select-none touch-none">
-	<!-- TOP NAVIGATION BAR -->
-	<div class="absolute top-3 inset-x-3 z-20 flex items-center justify-between pointer-events-auto max-w-2xl mx-auto w-full">
-		<div class="flex items-center gap-2 bg-white/95 border-2 border-black p-1 shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] w-full">
+	<!-- UNIFIED CASHIER TOP BAR -->
+	<div class="absolute top-2 inset-x-2 z-20 flex items-center justify-between pointer-events-auto max-w-2xl mx-auto">
+		<div class="flex items-center gap-1.5 bg-white/95 border-2 border-black p-1 shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] w-full">
+			<!-- Back to Burza -->
 			<a
-				href="/cashier"
-				class="flex-1 py-1.5 px-3 text-center text-xs font-black uppercase tracking-wider bg-black text-white flex items-center justify-center gap-1.5 transition-colors"
+				href="/sell"
+				class="px-2 py-1.5 border border-black bg-white text-black font-black text-xs uppercase flex items-center gap-1 hover:bg-neutral-100 transition-colors shrink-0"
+				title="Zpět na burzu"
 			>
-				<Scan class="w-3.5 h-3.5" />
-				POKLADNA
+				<ChevronLeft class="w-3.5 h-3.5" />
+				<span class="hidden sm:inline">BURZA</span>
 			</a>
-			<a
-				href="/cashier/payments"
-				class="flex-1 py-1.5 px-3 text-center text-xs font-black uppercase tracking-wider text-black hover:bg-neutral-100 flex items-center justify-center gap-1.5 transition-colors"
+
+			<!-- Switch: Pokladna / Platby -->
+			<div class="flex items-center flex-1 gap-1">
+				<a
+					href="/cashier"
+					class="flex-1 py-1.5 px-2 text-center text-xs font-black uppercase tracking-wider bg-black text-white flex items-center justify-center gap-1 transition-colors truncate"
+				>
+					<Scan class="w-3.5 h-3.5 shrink-0" />
+					<span>POKLADNA</span>
+				</a>
+				<a
+					href="/cashier/payments"
+					class="flex-1 py-1.5 px-2 text-center text-xs font-black uppercase tracking-wider text-black hover:bg-neutral-100 flex items-center justify-center gap-1 transition-colors truncate"
+				>
+					<Receipt class="w-3.5 h-3.5 shrink-0" />
+					<span>PLATBY</span>
+				</a>
+			</div>
+
+			<!-- Add manual code button -->
+			<button
+				type="button"
+				onclick={() => (isManualInputOpen = !isManualInputOpen)}
+				class="px-2 py-1.5 border border-black font-black text-xs uppercase flex items-center gap-1 transition-colors cursor-pointer shrink-0 {isManualInputOpen ? 'bg-black text-white' : 'bg-white text-black hover:bg-neutral-100'}"
+				title="Zadat kód ručně"
 			>
-				<Receipt class="w-3.5 h-3.5" />
-				BANKOVNÍ PLATBY
-			</a>
+				<Plus class="w-3.5 h-3.5" />
+				<span class="hidden sm:inline">KÓD</span>
+			</button>
 		</div>
 	</div>
 
@@ -771,30 +798,9 @@
 			class="absolute inset-0 pointer-events-none w-full h-full z-10"
 		></canvas>
 
-		<!-- Camera Guide & Instructions -->
-		{#if isCameraReady && !cameraError && canScan}
-			<div class="absolute top-16 inset-x-0 flex justify-center pointer-events-none z-10 px-4">
-				<div class="bg-white/95 text-black border-2 border-black px-3 py-1.5 text-[11px] font-black uppercase tracking-wider flex items-center gap-2 shadow-[2px_2px_0px_0px_rgba(0,0,0,1)]">
-					<Camera class="w-3.5 h-3.5 text-black shrink-0" />
-					<span>Namiřte kameru na knihy nebo kód kupujícího</span>
-				</div>
-			</div>
-		{/if}
-
-		<!-- Manual Input Toggle (Corner Button) -->
-		{#if paymentMode === null && !sheetExpanded}
-			<button
-				onclick={() => (isManualInputOpen = !isManualInputOpen)}
-				class="absolute top-16 right-3 z-20 bg-white text-black border-2 border-black p-1.5 shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] hover:bg-neutral-100 active:scale-95 transition-transform cursor-pointer"
-				title="Zadat kód ručně"
-			>
-				<Plus class="w-4 h-4" />
-			</button>
-		{/if}
-
 		<!-- Manual Code Drawer / Popover -->
 		{#if isManualInputOpen && paymentMode === null}
-			<div class="absolute top-28 right-3 z-30 bg-white border-4 border-black p-3 max-w-xs w-full shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]">
+			<div class="absolute top-14 right-2 z-30 bg-white border-2 border-black p-3 max-w-xs w-full shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]">
 				<div class="flex items-center justify-between pb-2 border-b-2 border-black mb-2">
 					<span class="text-xs font-black uppercase">RUČNÍ ZADÁNÍ KÓDU</span>
 					<button onclick={() => (isManualInputOpen = false)} class="p-0.5 hover:bg-neutral-100 cursor-pointer">
@@ -865,35 +871,21 @@
 				<div class="w-14 h-1.5 bg-neutral-400 rounded-full mb-2"></div>
 
 				<div class="w-full flex items-center justify-between gap-2">
-					<!-- Cart summary & Color dots -->
-					<div class="flex items-center gap-3 min-w-0">
-						<div class="flex items-center gap-2">
-							<span class="text-xs font-black uppercase tracking-tight bg-black text-white px-2 py-0.5 border border-black">
-								{cartBooks.length} {cartBooks.length === 1 ? 'KNIHA' : cartBooks.length >= 2 && cartBooks.length <= 4 ? 'KNIHY' : 'KNIH'}
-							</span>
-							<span class="text-lg font-black text-black truncate">
-								{totalAmount} Kč
-							</span>
-						</div>
-
-						<!-- Mini color indicator badges for items in cart -->
-						<div class="hidden sm:flex items-center gap-1 overflow-hidden">
-							{#each cartBooks.slice(0, 6) as b (b.id)}
-								{@const col = idToColor(b.id)}
-								<div
-									class="w-3.5 h-3.5 border border-black shrink-0"
-									style="background-color: {col.bg};"
-									title={b.id}
-								></div>
-							{/each}
-						</div>
+					<!-- Cart summary & counts -->
+					<div class="flex items-center gap-2 min-w-0">
+						<span class="text-xs font-black uppercase tracking-tight bg-black text-white px-2 py-0.5 border border-black shrink-0">
+							{cartBooks.length} ks
+						</span>
+						<span class="text-base sm:text-lg font-black text-black truncate">
+							{totalAmount} Kč
+						</span>
 					</div>
 
 					<!-- Buyer Pill or Zaplatit Action -->
-					<div class="flex items-center gap-2 shrink-0">
+					<div class="flex items-center gap-1.5 shrink-0">
 						{#if currentBuyer}
 							<div
-								class="flex items-center gap-1.5 bg-emerald-100 border-2 border-emerald-800 px-2.5 py-1 text-emerald-900 text-xs font-black truncate max-w-[140px]"
+								class="flex items-center gap-1 bg-emerald-100 border border-emerald-800 px-2 py-0.5 text-emerald-900 text-xs font-black truncate max-w-[110px] sm:max-w-[140px]"
 								title="{currentBuyer.name} ({currentBuyer.email})"
 							>
 								<User class="w-3.5 h-3.5 shrink-0 text-emerald-800" />
@@ -901,17 +893,19 @@
 							</div>
 						{/if}
 
-						<button
-							type="button"
-							onclick={(e) => {
-								e.stopPropagation();
-								openCheckoutModal();
-							}}
-							disabled={cartBooks.length === 0}
-							class="py-2 px-4 font-black text-xs uppercase tracking-wider border-2 border-black transition-all flex items-center gap-1.5 {cartBooks.length > 0 ? 'bg-black text-white hover:bg-neutral-800 active:scale-95 cursor-pointer' : 'bg-neutral-200 text-neutral-400 border-neutral-300 cursor-not-allowed'}"
-						>
-							<span>ZAPLATIT</span>
-						</button>
+						{#if !sheetExpanded}
+							<button
+								type="button"
+								onclick={(e) => {
+									e.stopPropagation();
+									openCheckoutModal();
+								}}
+								disabled={cartBooks.length === 0}
+								class="py-1.5 px-3 font-black text-xs uppercase tracking-wider border-2 border-black transition-all flex items-center gap-1 {cartBooks.length > 0 ? 'bg-black text-white hover:bg-neutral-800 active:scale-95 cursor-pointer' : 'bg-neutral-200 text-neutral-400 border-neutral-300 cursor-not-allowed'}"
+							>
+								<span>ZAPLATIT</span>
+							</button>
+						{/if}
 
 						<button
 							type="button"
@@ -1011,11 +1005,9 @@
 						</div>
 					{:else}
 						<!-- No buyer hint -->
-						<div class="p-2.5 border-2 border-dashed border-neutral-300 bg-neutral-50 text-neutral-600 text-xs flex items-center justify-between">
-							<span class="text-[11px] font-bold uppercase">
-								Kupující nepřiřazen (lze naskenovat kód z mobilu nebo zadat při platbě)
-							</span>
-						</div>
+						<p class="text-xs font-bold uppercase text-neutral-400 py-1">
+							Kupující nepřiřazen
+						</p>
 					{/if}
 				</div>
 
@@ -1027,10 +1019,9 @@
 					</div>
 
 					{#if cartBooks.length === 0}
-						<div class="p-8 border-2 border-dashed border-neutral-300 text-center text-neutral-500 text-xs font-bold uppercase">
-							Košík je prázdný.<br />
-							Namiřte kameru na knihy pro automatické přidání.
-						</div>
+						<p class="text-xs font-bold uppercase text-neutral-400 text-center py-6">
+							Košík je prázdný
+						</p>
 					{:else}
 						<div class="space-y-2">
 							{#each cartBooks as book (book.id)}
@@ -1145,7 +1136,7 @@
 						class="py-3 px-6 bg-black text-white hover:bg-neutral-800 font-black text-xs uppercase tracking-wider border-2 border-black flex items-center gap-2 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
 					>
 						<Banknote class="w-4 h-4" />
-						<span>PŘEJÍT K PLATBĚ ({totalAmount} Kč)</span>
+						<span>ZAPLATIT ({totalAmount} Kč)</span>
 					</button>
 				</div>
 			</div>
