@@ -216,6 +216,52 @@ export function drawBoundingBox(
 	ctx.restore();
 }
 
+export function drawStatusTag(
+	ctx: CanvasRenderingContext2D,
+	pos: Position,
+	transform: VideoTransform,
+	status: 'used' | 'available' | 'checking'
+) {
+	const { scale, offsetX, offsetY } = transform;
+	const p1 = { x: pos.topLeft.x * scale + offsetX, y: pos.topLeft.y * scale + offsetY };
+	const p2 = { x: pos.topRight.x * scale + offsetX, y: pos.topRight.y * scale + offsetY };
+	const midX = (p1.x + p2.x) / 2;
+	const minY = Math.min(p1.y, p2.y) - 6;
+
+	let text = 'VOLNÝ';
+	let bgColor = '#059669';
+	if (status === 'used') {
+		text = 'JIŽ POUŽITO';
+		bgColor = '#dc2626';
+	} else if (status === 'checking') {
+		text = 'OVĚŘUJI...';
+		bgColor = '#d97706';
+	}
+
+	ctx.save();
+	ctx.font = '900 12px monospace, system-ui, sans-serif';
+	const tm = ctx.measureText(text);
+	const boxW = tm.width + 14;
+	const boxH = 22;
+	const boxX = Math.round(midX - boxW / 2);
+	let boxY = Math.round(minY - boxH);
+	if (boxY < 4) {
+		boxY = Math.round(Math.min(p1.y, p2.y) + 6);
+	}
+
+	ctx.fillStyle = bgColor;
+	ctx.fillRect(boxX, boxY, boxW, boxH);
+	ctx.strokeStyle = '#000000';
+	ctx.lineWidth = 2;
+	ctx.strokeRect(boxX, boxY, boxW, boxH);
+
+	ctx.fillStyle = '#ffffff';
+	ctx.textAlign = 'center';
+	ctx.textBaseline = 'middle';
+	ctx.fillText(text, Math.round(midX), boxY + boxH / 2);
+	ctx.restore();
+}
+
 export interface PolygonColor {
 	bg: string;
 	border: string;

@@ -1,17 +1,18 @@
 <script lang="ts">
 	import { onMount, onDestroy } from 'svelte';
 	import { goto } from '$app/navigation';
-	import { auth, eventStore, sellerBooks } from '$lib/stores.svelte';
+	import { auth, eventStore, sellerBooks, priceStore } from '$lib/stores.svelte';
 	import { pb, getBookThumbnailUrl, getBookFullImageUrl } from '$lib/pocketbase';
 	import {
-		scanFrameForDataMatrix,
+		scanFrameForAllDataMatrices,
 		capturePhotoFromVideo,
 		drawBoundingBox,
+		drawStatusTag,
 		getVideoTransform,
 		CAMERA_CONSTRAINTS,
 		type ScanMatch
 	} from '$lib/scanner';
-	import { Plus, Camera, Check, X, Tag, AlertCircle, RefreshCw, ChevronLeft } from '@lucide/svelte';
+	import { Plus, Camera, Check, X, Tag, AlertCircle, RefreshCw, ChevronLeft, AlertTriangle } from '@lucide/svelte';
 	import type { Book } from '$lib/types';
 
 	let isModalOpen = $state(false);
@@ -21,7 +22,23 @@
 	let scannedCode = $state('');
 	let activeDetectedCode = $state<string | null>(null);
 	let activeMatch = $state<ScanMatch | null>(null);
+	let activeCodeStatus = $state<'checking' | 'available' | 'used'>('checking');
 	let lastSeenCodeTime = 0;
+	let lastVibratedStatus = $state<string | null>(null);
+
+	interface TrackedMatch {
+		match: ScanMatch;
+		lastSeen: number;
+	}
+	const trackedMatches = new Map<string, TrackedMatch>();
+
+	function getCodeStatus(code: string): 'checking' | 'available' | 'used' {
+		if (sellerBooks.books.some((b) => b.id === code)) return 'used';
+		const isUsed = priceStore.isUsed(code);
+		if (isUsed === true) return 'used';
+		if (isUsed === false) return 'available';
+		return 'checking';
+	}
 
 	let priceInput = $state<number | ''>('');
 	let capturedPhotoBlob = $state<Blob | null>(null);
@@ -66,7 +83,10 @@
 		scannedCode = '';
 		activeDetectedCode = null;
 		activeMatch = null;
+		activeCodeStatus = 'checking';
 		lastSeenCodeTime = 0;
+		lastVibratedStatus = null;
+		trackedMatches.clear();
 		priceInput = '';
 		capturedPhotoBlob = null;
 		if (photoPreviewUrl) URL.revokeObjectURL(photoPreviewUrl);
@@ -82,6 +102,9 @@
 		isModalOpen = false;
 		activeDetectedCode = null;
 		activeMatch = null;
+		activeCodeStatus = 'checking';
+		lastVibratedStatus = null;
+		trackedMatches.clear();
 		if (photoPreviewUrl) URL.revokeObjectURL(photoPreviewUrl);
 		photoPreviewUrl = null;
 	}
@@ -118,6 +141,7 @@
 			mediaStream.getTracks().forEach((t) => t.stop());
 			mediaStream = null;
 		}
+		trackedMatches.clear();
 	}
 
 	let isScanningFrame = false;
@@ -131,22 +155,67 @@
 			isScanningFrame = true;
 			lastScanTime = now;
 			try {
-				const match = await scanFrameForDataMatrix(canvasElement, videoElement);
+				const detected = await scanFrameForAllDataMatrices(canvasElement, videoElement, 6);
 				const seenTime = performance.now();
-				if (match && match.text) {
+
+				for (const match of detected) {
 					const code = match.text.trim();
 					if (code) {
-						if (activeDetectedCode !== code && navigator.vibrate) {
-							navigator.vibrate([60]);
+						if (!priceStore.has(code) && !sellerBooks.books.some((b) => b.id === code)) {
+							priceStore.fetchPrice(code);
 						}
-						activeDetectedCode = code;
-						activeMatch = match;
+						trackedMatches.set(code, { match, lastSeen: seenTime });
+					}
+				}
+
+				// Evict stale matches
+				for (const [code, item] of trackedMatches.entries()) {
+					if (seenTime - item.lastSeen > 450) {
+						trackedMatches.delete(code);
+					}
+				}
+
+				// Pick best code closest to center of the video frame
+				if (trackedMatches.size > 0 && videoElement) {
+					let bestMatch: ScanMatch | null = null;
+					let bestCode: string | null = null;
+					let minCenterDist = Infinity;
+					const centerX = videoElement.videoWidth / 2;
+					const centerY = videoElement.videoHeight / 2;
+
+					for (const [code, item] of trackedMatches.entries()) {
+						const boxCenterX = item.match.box.x + item.match.box.width / 2;
+						const boxCenterY = item.match.box.y + item.match.box.height / 2;
+						const dist = Math.hypot(boxCenterX - centerX, boxCenterY - centerY);
+						if (dist < minCenterDist) {
+							minCenterDist = dist;
+							bestMatch = item.match;
+							bestCode = code;
+						}
+					}
+
+					if (bestCode && bestMatch) {
+						const status = getCodeStatus(bestCode);
+						const vibrationKey = `${bestCode}:${status}`;
+						if (lastVibratedStatus !== vibrationKey && navigator.vibrate) {
+							lastVibratedStatus = vibrationKey;
+							if (status === 'used') {
+								navigator.vibrate([150, 80, 150]);
+							} else if (status === 'available') {
+								navigator.vibrate([60]);
+							}
+						}
+
+						activeDetectedCode = bestCode;
+						activeMatch = bestMatch;
+						activeCodeStatus = status;
 						lastSeenCodeTime = seenTime;
 					}
 				} else {
-					if (activeDetectedCode && seenTime - lastSeenCodeTime > 2500) {
+					if (seenTime - lastSeenCodeTime > 1500) {
 						activeDetectedCode = null;
 						activeMatch = null;
+						lastVibratedStatus = null;
 					}
 				}
 			} catch (err) {
@@ -182,17 +251,29 @@
 				ctx.clearRect(0, 0, cRect.width, cRect.height);
 
 				const now = performance.now();
-				if (activeMatch && now - lastSeenCodeTime < 450) {
-					const vRect = videoElement.getBoundingClientRect();
-					const transform = getVideoTransform(
-						videoElement.videoWidth,
-						videoElement.videoHeight,
-						vRect.width,
-						vRect.height,
-						vRect.left - cRect.left,
-						vRect.top - cRect.top
-					);
-					drawBoundingBox(ctx, activeMatch.position, transform, '#10b981');
+				const vRect = videoElement.getBoundingClientRect();
+				const transform = getVideoTransform(
+					videoElement.videoWidth,
+					videoElement.videoHeight,
+					vRect.width,
+					vRect.height,
+					vRect.left - cRect.left,
+					vRect.top - cRect.top
+				);
+
+				for (const [code, item] of trackedMatches.entries()) {
+					if (now - item.lastSeen < 450) {
+						const status = getCodeStatus(code);
+						let color = '#10b981'; // Green for available
+						if (status === 'used') {
+							color = '#ef4444'; // Red for used
+						} else if (status === 'checking') {
+							color = '#f59e0b'; // Amber for checking
+						}
+
+						drawBoundingBox(ctx, item.match.position, transform, color);
+						drawStatusTag(ctx, item.match.position, transform, status);
+					}
 				}
 				ctx.restore();
 			}
@@ -204,7 +285,7 @@
 	}
 
 	function confirmScannedCode() {
-		if (!activeDetectedCode) return;
+		if (!activeDetectedCode || activeCodeStatus === 'used') return;
 		if (navigator.vibrate) navigator.vibrate([100]);
 		scannedCode = activeDetectedCode;
 		step = 'CAPTURE_COVER';
@@ -249,7 +330,10 @@
 		scannedCode = '';
 		activeDetectedCode = null;
 		activeMatch = null;
+		activeCodeStatus = 'checking';
 		lastSeenCodeTime = 0;
+		lastVibratedStatus = null;
+		trackedMatches.clear();
 		if (!mediaStream) {
 			startCamera();
 		} else {
@@ -283,6 +367,13 @@
 			formData.append('photo', capturedPhotoBlob, `book_${scannedCode.trim()}.jpg`);
 
 			await pb.collection('books').create(formData);
+
+			// Mark as used in priceStore immediately
+			priceStore.set(scannedCode.trim(), {
+				id: scannedCode.trim(),
+				price: Number(priceInput),
+				status: 'available'
+			});
 
 			await sellerBooks.refresh();
 			closeSellModal();
@@ -506,17 +597,43 @@
 
 				{#if activeDetectedCode}
 					<div class="absolute bottom-6 inset-x-0 flex flex-col items-center gap-2 z-20 px-4">
-						<div class="bg-white border-2 border-black px-4 py-2 text-xs font-black uppercase text-black">
-							NASNÍMÁN KÓD: <span class="text-emerald-700">{activeDetectedCode}</span>
-						</div>
-						<button
-							type="button"
-							onclick={confirmScannedCode}
-							class="w-full max-w-sm py-4 bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white font-black text-sm uppercase tracking-wider border-2 border-black shadow-none flex items-center justify-center gap-2 cursor-pointer transition-colors"
-						>
-							<Check class="w-5 h-5" />
-							<span>DALŠÍ (POKRAČOVAT NA FOTO)</span>
-						</button>
+						{#if activeCodeStatus === 'used'}
+							<div class="bg-red-600 text-white border-2 border-black px-4 py-2.5 text-center shadow-none w-full max-w-sm flex items-center justify-center gap-3">
+								<AlertCircle class="w-6 h-6 flex-shrink-0 text-white" />
+								<div class="text-left">
+									<p class="text-xs font-black uppercase tracking-wider">KÓD JE JIŽ POUŽIT!</p>
+									<p class="text-[11px] font-bold text-red-100">Kód <span class="font-mono">{activeDetectedCode}</span> už v systému existuje.</p>
+								</div>
+							</div>
+							<div class="w-full max-w-sm py-3.5 bg-black text-white font-black text-xs uppercase tracking-wider border-2 border-black flex items-center justify-center gap-2 text-center px-3">
+								<AlertTriangle class="w-4 h-4 text-amber-400" />
+								<span>POUŽIJTE JINOU SAMOLEPKU</span>
+							</div>
+						{:else if activeCodeStatus === 'checking'}
+							<div class="bg-white border-2 border-black px-4 py-2 text-xs font-black uppercase text-black flex items-center gap-2">
+								<RefreshCw class="w-4 h-4 animate-spin text-neutral-600" />
+								<span>OVĚŘUJI KÓD: <span class="font-mono">{activeDetectedCode}</span>...</span>
+							</div>
+							<button
+								type="button"
+								disabled
+								class="w-full max-w-sm py-4 bg-neutral-200 text-neutral-500 font-black text-sm uppercase tracking-wider border-2 border-neutral-400 flex items-center justify-center gap-2 cursor-not-allowed"
+							>
+								<span>OVĚŘUJI DOSTUPNOST...</span>
+							</button>
+						{:else}
+							<div class="bg-white border-2 border-black px-4 py-2 text-xs font-black uppercase text-black">
+								KÓD JE VOLNÝ: <span class="text-emerald-700 font-mono font-black">{activeDetectedCode}</span>
+							</div>
+							<button
+								type="button"
+								onclick={confirmScannedCode}
+								class="w-full max-w-sm py-4 bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white font-black text-sm uppercase tracking-wider border-2 border-black shadow-none flex items-center justify-center gap-2 cursor-pointer transition-colors"
+							>
+								<Check class="w-5 h-5" />
+								<span>DALŠÍ (POKRAČOVAT NA FOTO)</span>
+							</button>
+						{/if}
 					</div>
 				{/if}
 			{/if}

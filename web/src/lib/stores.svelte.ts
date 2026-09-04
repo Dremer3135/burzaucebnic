@@ -310,6 +310,15 @@ class PriceStore {
 		return this.cache.has(id);
 	}
 
+	set(id: string, data: CachedPrice | null) {
+		this.cache.set(id, data);
+	}
+
+	isUsed(id: string): boolean | null {
+		if (!this.cache.has(id)) return null;
+		return this.cache.get(id) !== null;
+	}
+
 	async fetchPrice(id: string): Promise<CachedPrice | null> {
 		if (this.cache.has(id)) {
 			return this.cache.get(id)!;
@@ -329,8 +338,12 @@ class PriceStore {
 				this.cache.set(id, data);
 				return data;
 			} catch (err: any) {
-				// Record not found (404) or error
-				this.cache.set(id, null);
+				// Record not found (404) means code is free
+				if (err?.status === 404) {
+					this.cache.set(id, null);
+					return null;
+				}
+				// On other network/auth errors, do not cache as non-existent
 				return null;
 			} finally {
 				this.inFlight.delete(id);
