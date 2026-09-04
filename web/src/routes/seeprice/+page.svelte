@@ -1,6 +1,5 @@
 <script lang="ts">
 	import { onMount, onDestroy } from 'svelte';
-	import { goto } from '$app/navigation';
 	import { auth, priceStore } from '$lib/stores.svelte';
 	import {
 		CAMERA_CONSTRAINTS,
@@ -34,11 +33,7 @@
 	}
 	const trackedMatches = new Map<string, TrackedMatch>();
 
-	$effect(() => {
-		if (!auth.user) {
-			goto('/');
-		}
-	});
+
 
 	$effect(() => {
 		if (miniBadgeCanvas && auth.user?.id) {

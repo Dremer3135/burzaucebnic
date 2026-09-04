@@ -1,6 +1,5 @@
 <script lang="ts">
 	import { onMount, onDestroy } from 'svelte';
-	import { goto } from '$app/navigation';
 	import { auth, eventStore, sellerBooks, priceStore } from '$lib/stores.svelte';
 	import { pb, getBookThumbnailUrl, getBookFullImageUrl } from '$lib/pocketbase';
 	import {
@@ -74,11 +73,7 @@
 		}
 	});
 
-	$effect(() => {
-		if (!auth.user) {
-			goto('/');
-		}
-	});
+
 
 	onDestroy(() => {
 		stopCamera();

@@ -1,6 +1,5 @@
 <script lang="ts">
 	import { onMount, onDestroy } from 'svelte';
-	import { goto } from '$app/navigation';
 	import { auth, eventStore } from '$lib/stores.svelte';
 	import { pb, getBookThumbnailUrl, getBookFullImageUrl } from '$lib/pocketbase';
 	import {
@@ -146,13 +145,8 @@
 	);
 
 	// ----------------------------------------------------
-	// LIFECYCLE & PERMISSIONS
+	// LIFECYCLE & DIMENSIONS
 	// ----------------------------------------------------
-	$effect(() => {
-		if (auth.user && !auth.isCashier) {
-			goto('/');
-		}
-	});
 
 	function updateSheetDimensions() {
 		if (sheetElement) sheetHeight = sheetElement.offsetHeight || 500;

@@ -1,6 +1,5 @@
 <script lang="ts">
 	import { onMount, onDestroy } from 'svelte';
-	import { goto } from '$app/navigation';
 	import { auth, cashierPayments } from '$lib/stores.svelte';
 	import { pb } from '$lib/pocketbase';
 	import {
@@ -21,11 +20,7 @@
 	let confirmingPaymentId = $state<string | null>(null);
 	let errorMessage = $state('');
 
-	$effect(() => {
-		if (auth.user && !auth.isCashier) {
-			goto('/');
-		}
-	});
+
 
 	onMount(() => {
 		if (auth.isCashier) {

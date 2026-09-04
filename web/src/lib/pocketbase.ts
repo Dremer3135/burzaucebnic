@@ -7,11 +7,24 @@ import type { User, Event, Book } from './types';
 const pbUrl = typeof window !== 'undefined' ? window.location.origin : 'http://127.0.0.1:8090';
 export const pb = new PocketBase(pbUrl);
 
+// Sync initial auth state from cookie on client
+if (typeof document !== 'undefined') {
+	pb.authStore.loadFromCookie(document.cookie);
+}
+
 export const currentUser = writable<User | null>(pb.authStore.model as unknown as User | null);
 export const activeEvent = writable<Event | null>(null);
 
-pb.authStore.onChange((auth) => {
+// Automatically sync document.cookie whenever auth changes
+pb.authStore.onChange(() => {
 	currentUser.set(pb.authStore.model as unknown as User | null);
+	if (typeof document !== 'undefined') {
+		document.cookie = pb.authStore.exportToCookie({
+			httpOnly: false,
+			sameSite: 'lax',
+			path: '/'
+		});
+	}
 });
 
 export async function loginWithPassword(email: string, pass: string) {
@@ -31,6 +44,13 @@ export async function loginWithGoogle() {
 export function logout() {
 	pb.authStore.clear();
 	currentUser.set(null);
+	if (typeof document !== 'undefined') {
+		document.cookie = pb.authStore.exportToCookie({
+			httpOnly: false,
+			sameSite: 'lax',
+			path: '/'
+		});
+	}
 }
 
 export async function fetchActiveEvent(): Promise<Event | null> {

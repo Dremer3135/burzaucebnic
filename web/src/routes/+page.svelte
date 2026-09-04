@@ -4,20 +4,18 @@
 	import LoginModal from '$lib/components/LoginModal.svelte';
 	import { Tag, ScanLine, Clock, ShieldCheck } from '@lucide/svelte';
 
-	$effect(() => {
-		if (auth.user && !eventStore.isLoading) {
-			if (eventStore.isMarketActive() && eventStore.event) {
-				const target = eventStore.event.defaultPage === 'seeprice' ? '/seeprice' : '/sell';
-				goto(target);
-			}
+	function handleLoginSuccess() {
+		if (eventStore.isMarketActive() && eventStore.event) {
+			const target = eventStore.event.defaultPage === 'seeprice' ? '/seeprice' : '/sell';
+			goto(target);
 		}
-	});
+	}
 </script>
 
 <div class="flex-1 flex flex-col items-center justify-center p-4 bg-white text-black overflow-y-auto">
 	{#if !auth.user}
 		<div class="w-full flex justify-center py-6">
-			<LoginModal />
+			<LoginModal onsuccess={handleLoginSuccess} />
 		</div>
 	{:else}
 		<div class="max-w-md w-full bg-white border-2 border-black p-6 text-center shadow-none">

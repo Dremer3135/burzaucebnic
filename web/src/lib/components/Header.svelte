@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { goto } from '$app/navigation';
 	import { page } from '$app/stores';
 	import { auth } from '$lib/stores.svelte';
 	import { LogOut, BookOpen, ShieldAlert } from '@lucide/svelte';
@@ -52,7 +53,10 @@
 
 			{#if auth.user}
 				<button
-					onclick={() => auth.logout()}
+					onclick={async () => {
+						auth.logout();
+						await goto('/');
+					}}
 					class="font-bold text-xs uppercase tracking-wider px-2.5 py-1.5 border-2 border-black bg-white text-black hover:bg-black hover:text-white transition-colors cursor-pointer flex items-center gap-1"
 					title="Odhlásit se ({auth.user.email})"
 				>
