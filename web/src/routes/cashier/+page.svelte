@@ -73,18 +73,37 @@
 	let currentBuyer = $state<BuyerInfo | null>(null);
 	let totalAmount = $derived(cartBooks.reduce((sum, b) => sum + b.price, 0));
 
-	// Bottom Sheet toggle
+	// Bottom Sheet state & DOM elements
+	let sheetElement = $state<HTMLElement | null>(null);
+	let headerElement = $state<HTMLElement | null>(null);
+	let sheetScrollContainer = $state<HTMLElement | null>(null);
+
 	let sheetExpanded = $state(false);
+	let isDraggingSheet = $state(false);
+	let sheetStartY = 0;
+	let sheetDragDeltaY = $state(0);
+	let sheetHeight = $state(500);
+	let headerHeight = $state(92);
 
-	// Swipe gesture tracking for cart books (bookId -> deltaX)
-	let swipingBookId = $state<string | null>(null);
-	let swipeStartX = 0;
-	let swipeCurrentDeltaX = $state(0);
+	let collapsedOffset = $derived(Math.max(0, sheetHeight - headerHeight));
+	let sheetTranslateY = $derived.by(() => {
+		if (isDraggingSheet) {
+			if (sheetExpanded) {
+				return Math.max(0, Math.min(collapsedOffset, sheetDragDeltaY));
+			} else {
+				return Math.max(0, Math.min(collapsedOffset, collapsedOffset + sheetDragDeltaY));
+			}
+		}
+		return sheetExpanded ? 0 : collapsedOffset;
+	});
 
-	// Swipe gesture tracking for buyer card
-	let swipingBuyer = $state(false);
-	let buyerStartX = 0;
-	let buyerCurrentDeltaX = $state(0);
+	// Swipe gesture tracking for cart items & buyer card
+	let pendingItemId: string | null = null;
+	let pointerDownX = 0;
+	let pointerDownY = 0;
+	let swipingItemId = $state<string | null>(null);
+	let swipeDeltaX = $state(0);
+	let removingItemIds = $state<Set<string>>(new Set());
 
 	// ----------------------------------------------------
 	// 3. IMAGE PREVIEW MODAL
@@ -115,6 +134,17 @@
 	let manualCodeInput = $state('');
 	let isManualInputOpen = $state(false);
 
+	// Pure standard mode gating:
+	// Scanner strictly scans and auto-adds ONLY in pure standard camera view
+	let canScan = $derived(
+		paymentMode === null &&
+		!isCheckoutModalOpen &&
+		!previewBook &&
+		!isManualInputOpen &&
+		!sheetExpanded &&
+		!isDraggingSheet
+	);
+
 	// ----------------------------------------------------
 	// LIFECYCLE & PERMISSIONS
 	// ----------------------------------------------------
@@ -124,11 +154,26 @@
 		}
 	});
 
+	function updateSheetDimensions() {
+		if (sheetElement) sheetHeight = sheetElement.offsetHeight || 500;
+		if (headerElement) headerHeight = headerElement.offsetHeight || 92;
+	}
+
+	$effect(() => {
+		if (sheetElement) sheetHeight = sheetElement.offsetHeight || 500;
+		if (headerElement) headerHeight = headerElement.offsetHeight || 92;
+	});
+
 	onMount(() => {
+		updateSheetDimensions();
+		window.addEventListener('resize', updateSheetDimensions);
 		startCamera();
 	});
 
 	onDestroy(() => {
+		if (typeof window !== 'undefined') {
+			window.removeEventListener('resize', updateSheetDimensions);
+		}
 		stopCamera();
 	});
 
@@ -176,7 +221,9 @@
 	function stopCamera() {
 		isScanningLoopActive = false;
 		if (renderAnimId !== null) {
-			cancelAnimationFrame(renderAnimId);
+			if (typeof cancelAnimationFrame !== 'undefined') {
+				cancelAnimationFrame(renderAnimId);
+			}
 			renderAnimId = null;
 		}
 		if (mediaStream) {
@@ -191,6 +238,15 @@
 
 	async function runDetectionLoop() {
 		if (!isScanningLoopActive) return;
+
+		// Pure standard mode: pause detection loop and clear stale boxes when sheets/modals open
+		if (!canScan) {
+			if (trackedMatches.size > 0) {
+				trackedMatches.clear();
+			}
+			setTimeout(runDetectionLoop, 100);
+			return;
+		}
 
 		const now = performance.now();
 		if (!isDetecting && videoElement && captureCanvas && videoElement.videoWidth > 0 && now - lastDetectTime >= 60) {
@@ -266,44 +322,47 @@
 				ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 				ctx.clearRect(0, 0, cRect.width, cRect.height);
 
-				const vRect = videoElement.getBoundingClientRect();
-				const transform = getVideoTransform(
-					videoElement.videoWidth,
-					videoElement.videoHeight,
-					vRect.width,
-					vRect.height,
-					vRect.left - cRect.left,
-					vRect.top - cRect.top
-				);
+				// Only render AR polygons when in pure standard scanning mode
+				if (canScan) {
+					const vRect = videoElement.getBoundingClientRect();
+					const transform = getVideoTransform(
+						videoElement.videoWidth,
+						videoElement.videoHeight,
+						vRect.width,
+						vRect.height,
+						vRect.left - cRect.left,
+						vRect.top - cRect.top
+					);
 
-				// Draw polygons over all tracked matches
-				for (const { match } of trackedMatches.values()) {
-					const code = match.text.trim();
+					// Draw polygons over all tracked matches
+					for (const { match } of trackedMatches.values()) {
+						const code = match.text.trim();
 
-					// 1. Is it a book already in the cart?
-					const bookInCart = cartBooks.find((b) => b.id === code);
-					if (bookInCart) {
-						const color = idToColor(bookInCart.id);
-						drawPricePolygon(ctx, match.position, `${bookInCart.price} Kč`, transform, color);
-						continue;
-					}
+						// 1. Is it a book already in the cart?
+						const bookInCart = cartBooks.find((b) => b.id === code);
+						if (bookInCart) {
+							const color = idToColor(bookInCart.id);
+							drawPricePolygon(ctx, match.position, `${bookInCart.price} Kč`, transform, color);
+							continue;
+						}
 
-					// 2. Is it the current buyer?
-					if (currentBuyer && currentBuyer.id === code) {
-						drawPricePolygon(ctx, match.position, `✓ ${currentBuyer.name || 'ZÁKAZNÍK'}`, transform, {
-							bg: '#059669',
-							border: '#047857',
-							text: '#ffffff',
-							lightBg: '#d1fae5'
-						});
-						continue;
-					}
+						// 2. Is it the current buyer?
+						if (currentBuyer && currentBuyer.id === code) {
+							drawPricePolygon(ctx, match.position, `✓ ${currentBuyer.name || 'ZÁKAZNÍK'}`, transform, {
+								bg: '#059669',
+								border: '#047857',
+								text: '#ffffff',
+								lightBg: '#d1fae5'
+							});
+							continue;
+						}
 
-					// 3. What if it's an available book cached or being added?
-					const cached = codeLookupCache.get(code);
-					if (cached?.type === 'book' && cached.book.status === 'available' && !suppressedBooks.has(code)) {
-						const color = idToColor(cached.book.id);
-						drawPricePolygon(ctx, match.position, `${cached.book.price} Kč`, transform, color);
+						// 3. What if it's an available book cached or being added?
+						const cached = codeLookupCache.get(code);
+						if (cached?.type === 'book' && cached.book.status === 'available' && !suppressedBooks.has(code)) {
+							const color = idToColor(cached.book.id);
+							drawPricePolygon(ctx, match.position, `${cached.book.price} Kč`, transform, color);
+						}
 					}
 				}
 
@@ -356,67 +415,189 @@
 	}
 
 	// ----------------------------------------------------
+	// BOTTOM SHEET DRAG & TOGGLE HANDLERS
+	// ----------------------------------------------------
+	function handleSheetHandlePointerDown(e: PointerEvent) {
+		if (e.button !== 0) return;
+		const target = e.target as HTMLElement;
+		if (target.closest('button')) return;
+
+		updateSheetDimensions();
+		isDraggingSheet = true;
+		sheetStartY = e.clientY;
+		sheetDragDeltaY = 0;
+		try {
+			(e.currentTarget as HTMLElement)?.setPointerCapture(e.pointerId);
+		} catch {}
+	}
+
+	function handleSheetHandlePointerMove(e: PointerEvent) {
+		if (!isDraggingSheet) return;
+		sheetDragDeltaY = e.clientY - sheetStartY;
+	}
+
+	function handleSheetHandlePointerUp(e: PointerEvent) {
+		if (!isDraggingSheet) return;
+		isDraggingSheet = false;
+		try {
+			(e.currentTarget as HTMLElement)?.releasePointerCapture(e.pointerId);
+		} catch {}
+
+		const threshold = 40;
+		if (sheetExpanded) {
+			if (sheetDragDeltaY > threshold) {
+				sheetExpanded = false;
+			}
+		} else {
+			if (sheetDragDeltaY < -threshold) {
+				sheetExpanded = true;
+			}
+		}
+		sheetDragDeltaY = 0;
+	}
+
+	function handleHeaderClick(e: MouseEvent) {
+		const target = e.target as HTMLElement;
+		if (target.closest('button')) return;
+		if (Math.abs(sheetDragDeltaY) < 5) {
+			sheetExpanded = !sheetExpanded;
+		}
+	}
+
+	// Pull-down gesture on scroll container when at scrollTop === 0
+	let contentTouchStartY = 0;
+	let isContentPulling = false;
+
+	function handleContentPointerDown(e: PointerEvent) {
+		if (!sheetScrollContainer || sheetScrollContainer.scrollTop > 0) return;
+		const target = e.target as HTMLElement;
+		if (target.closest('button') || target.closest('[data-item-row]')) return;
+
+		contentTouchStartY = e.clientY;
+		isContentPulling = true;
+	}
+
+	function handleContentPointerMove(e: PointerEvent) {
+		if (!isContentPulling || !sheetScrollContainer || sheetScrollContainer.scrollTop > 0) return;
+		const deltaY = e.clientY - contentTouchStartY;
+		if (deltaY > 15 && sheetExpanded) {
+			if (swipingItemId) return;
+			isDraggingSheet = true;
+			sheetDragDeltaY = deltaY;
+		}
+	}
+
+	function handleContentPointerUp(e: PointerEvent) {
+		if (isContentPulling) {
+			isContentPulling = false;
+			if (isDraggingSheet) {
+				handleSheetHandlePointerUp(e);
+			}
+		}
+	}
+
+	// ----------------------------------------------------
 	// CART INTERACTIONS (SWIPE-TO-DELETE & UNLINK)
 	// ----------------------------------------------------
+	function handleItemPointerDown(e: PointerEvent, id: string) {
+		if (e.button !== 0) return;
+		const target = e.target as HTMLElement;
+		if (target.closest('button')) return;
+
+		pendingItemId = id;
+		pointerDownX = e.clientX;
+		pointerDownY = e.clientY;
+		swipingItemId = null;
+		swipeDeltaX = 0;
+	}
+
+	function handleItemPointerMove(e: PointerEvent, id: string) {
+		if (swipingItemId === id) {
+			const delta = e.clientX - pointerDownX;
+			// Allow smooth drag right up to 220px, with subtle left rubber-band (-25px)
+			swipeDeltaX = Math.max(-25, Math.min(220, delta));
+			return;
+		}
+
+		if (pendingItemId === id) {
+			const dx = Math.abs(e.clientX - pointerDownX);
+			const dy = Math.abs(e.clientY - pointerDownY);
+
+			// User is scrolling vertically
+			if (dy > 8 && dy >= dx) {
+				pendingItemId = null;
+				return;
+			}
+
+			// User is swiping horizontally to delete
+			if (dx > 8 && dx > dy) {
+				swipingItemId = id;
+				swipeDeltaX = Math.max(-25, Math.min(220, e.clientX - pointerDownX));
+				try {
+					(e.currentTarget as HTMLElement)?.setPointerCapture(e.pointerId);
+				} catch {}
+			}
+		}
+	}
+
+	function handleItemPointerUp(e: PointerEvent, id: string, isBuyer = false) {
+		if (swipingItemId === id) {
+			try {
+				(e.currentTarget as HTMLElement)?.releasePointerCapture(e.pointerId);
+			} catch {}
+
+			const committed = swipeDeltaX >= 80;
+			if (committed) {
+				if (isBuyer) {
+					triggerUnlinkBuyer();
+				} else {
+					triggerRemoveBook(id);
+				}
+			}
+
+			swipingItemId = null;
+			swipeDeltaX = 0;
+		}
+		pendingItemId = null;
+	}
+
 	function removeBookFromCart(bookId: string) {
 		cartBooks = cartBooks.filter((b) => b.id !== bookId);
 		// Suppress immediately: stays suppressed as long as in camera view,
 		// and re-arms only if it leaves the camera view for >= 2 seconds!
 		suppressedBooks.set(bookId, Date.now());
-		if (swipingBookId === bookId) {
-			swipingBookId = null;
-			swipeCurrentDeltaX = 0;
+		if (swipingItemId === bookId) {
+			swipingItemId = null;
+			swipeDeltaX = 0;
 		}
+	}
+
+	function triggerRemoveBook(bookId: string) {
+		removingItemIds.add(bookId);
+		removingItemIds = new Set(removingItemIds);
+		setTimeout(() => {
+			removeBookFromCart(bookId);
+			removingItemIds.delete(bookId);
+			removingItemIds = new Set(removingItemIds);
+		}, 200);
 	}
 
 	function unlinkBuyer() {
 		currentBuyer = null;
-		swipingBuyer = false;
-		buyerCurrentDeltaX = 0;
-	}
-
-	// Touch/Pointer handlers for book row swipe-right
-	function handleBookPointerDown(e: PointerEvent, bookId: string) {
-		swipingBookId = bookId;
-		swipeStartX = e.clientX;
-		swipeCurrentDeltaX = 0;
-	}
-
-	function handleBookPointerMove(e: PointerEvent, bookId: string) {
-		if (swipingBookId !== bookId) return;
-		const delta = e.clientX - swipeStartX;
-		swipeCurrentDeltaX = Math.max(0, Math.min(180, delta));
-	}
-
-	function handleBookPointerUp(e: PointerEvent, bookId: string) {
-		if (swipingBookId !== bookId) return;
-		if (swipeCurrentDeltaX >= 75) {
-			removeBookFromCart(bookId);
+		if (swipingItemId === 'buyer') {
+			swipingItemId = null;
+			swipeDeltaX = 0;
 		}
-		swipingBookId = null;
-		swipeCurrentDeltaX = 0;
 	}
 
-	// Touch/Pointer handlers for buyer card swipe-right
-	function handleBuyerPointerDown(e: PointerEvent) {
-		swipingBuyer = true;
-		buyerStartX = e.clientX;
-		buyerCurrentDeltaX = 0;
-	}
-
-	function handleBuyerPointerMove(e: PointerEvent) {
-		if (!swipingBuyer) return;
-		const delta = e.clientX - buyerStartX;
-		buyerCurrentDeltaX = Math.max(0, Math.min(180, delta));
-	}
-
-	function handleBuyerPointerUp(e: PointerEvent) {
-		if (!swipingBuyer) return;
-		if (buyerCurrentDeltaX >= 75) {
+	function triggerUnlinkBuyer() {
+		removingItemIds.add('buyer');
+		removingItemIds = new Set(removingItemIds);
+		setTimeout(() => {
 			unlinkBuyer();
-		}
-		swipingBuyer = false;
-		buyerCurrentDeltaX = 0;
+			removingItemIds.delete('buyer');
+			removingItemIds = new Set(removingItemIds);
+		}, 200);
 	}
 
 	// Manual code entry handler
@@ -438,6 +619,7 @@
 		checkoutName = currentBuyer ? currentBuyer.name || '' : '';
 		emailSearchResults = [];
 		checkoutError = '';
+		sheetExpanded = false;
 		isCheckoutModalOpen = true;
 	}
 
@@ -549,6 +731,9 @@
 		paymentMode = null;
 		paymentError = '';
 		sheetExpanded = false;
+		removingItemIds.clear();
+		swipingItemId = null;
+		swipeDeltaX = 0;
 	}
 </script>
 
@@ -593,7 +778,7 @@
 		></canvas>
 
 		<!-- Camera Guide & Instructions -->
-		{#if isCameraReady && !cameraError && paymentMode === null}
+		{#if isCameraReady && !cameraError && canScan}
 			<div class="absolute top-16 inset-x-0 flex justify-center pointer-events-none z-10 px-4">
 				<div class="bg-white/95 text-black border-2 border-black px-3 py-1.5 text-[11px] font-black uppercase tracking-wider flex items-center gap-2 shadow-[2px_2px_0px_0px_rgba(0,0,0,1)]">
 					<Camera class="w-3.5 h-3.5 text-black shrink-0" />
@@ -603,7 +788,7 @@
 		{/if}
 
 		<!-- Manual Input Toggle (Corner Button) -->
-		{#if paymentMode === null}
+		{#if paymentMode === null && !sheetExpanded}
 			<button
 				onclick={() => (isManualInputOpen = !isManualInputOpen)}
 				class="absolute top-16 right-3 z-20 bg-white text-black border-2 border-black p-1.5 shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] hover:bg-neutral-100 active:scale-95 transition-transform cursor-pointer"
@@ -665,19 +850,25 @@
 	<!-- ---------------------------------------------------------------- -->
 	{#if paymentMode === null}
 		<div
-			class="fixed bottom-0 inset-x-0 z-30 max-w-2xl mx-auto w-full bg-white border-t-4 border-x-4 border-black text-black transition-all duration-300 flex flex-col shadow-[0_-8px_24px_rgba(0,0,0,0.2)]"
-			style={sheetExpanded ? 'max-height: 82vh;' : 'max-height: 105px;'}
+			bind:this={sheetElement}
+			class="fixed bottom-0 inset-x-0 z-30 max-w-2xl mx-auto w-full bg-white border-t-4 border-x-4 border-black text-black flex flex-col shadow-[0_-8px_24px_rgba(0,0,0,0.2)] overflow-hidden {isDraggingSheet ? '' : 'transition-transform duration-300 ease-out'}"
+			style="height: min(80vh, 650px); transform: translateY({isDraggingSheet ? sheetTranslateY + 'px' : sheetExpanded ? '0px' : 'calc(100% - ' + headerHeight + 'px)'});"
 		>
 			<!-- DRAG / TOGGLE HEADER -->
 			<div
+				bind:this={headerElement}
 				role="button"
 				tabindex="0"
-				onclick={() => (sheetExpanded = !sheetExpanded)}
+				onpointerdown={handleSheetHandlePointerDown}
+				onpointermove={handleSheetHandlePointerMove}
+				onpointerup={handleSheetHandlePointerUp}
+				onpointercancel={handleSheetHandlePointerUp}
+				onclick={handleHeaderClick}
 				onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') sheetExpanded = !sheetExpanded; }}
-				class="w-full flex flex-col items-center pt-2 pb-2.5 px-4 cursor-pointer select-none bg-neutral-50 hover:bg-neutral-100 border-b-2 border-black shrink-0"
+				class="w-full flex flex-col items-center pt-2 pb-2.5 px-4 cursor-grab active:cursor-grabbing select-none bg-neutral-50 hover:bg-neutral-100 border-b-2 border-black shrink-0 touch-none"
 			>
-				<!-- Subtle drag handle bar -->
-				<div class="w-12 h-1.5 bg-neutral-300 rounded-full mb-2"></div>
+				<!-- Subtle drag handle bar pill -->
+				<div class="w-14 h-1.5 bg-neutral-400 rounded-full mb-2"></div>
 
 				<div class="w-full flex items-center justify-between gap-2">
 					<!-- Cart summary & Color dots -->
@@ -730,6 +921,10 @@
 
 						<button
 							type="button"
+							onclick={(e) => {
+								e.stopPropagation();
+								sheetExpanded = !sheetExpanded;
+							}}
 							class="p-1 hover:bg-neutral-200 text-black cursor-pointer border border-transparent"
 							aria-label={sheetExpanded ? 'Zabalit košík' : 'Rozbalit košík'}
 						>
@@ -743,192 +938,223 @@
 				</div>
 			</div>
 
-			<!-- EXPANDED CONTENT (Scrollable) -->
-			{#if sheetExpanded}
-				<div class="flex-1 overflow-y-auto p-4 space-y-4">
-					<!-- BUYER CARD SECTION -->
-					<div>
-						<div class="text-[10px] font-black uppercase tracking-wider text-neutral-500 mb-1.5">
-							KUPUJÍCÍ
-						</div>
-						{#if currentBuyer}
-							<!-- Swipeable Buyer Card -->
-							<div class="relative overflow-hidden border-2 border-black bg-emerald-50 select-none">
-								<!-- Background track revealed on swipe-right -->
-								<div class="absolute inset-0 bg-red-600 flex items-center px-4 gap-2 text-white font-black text-xs uppercase">
-									<UserMinus class="w-4 h-4" />
-									<span>ODPOJIT KUPUJÍCÍHO</span>
-								</div>
-
-								<!-- Foreground card that slides -->
-								<div
-									role="presentation"
-									class="relative bg-emerald-50 p-3 flex items-center justify-between gap-3 transition-transform duration-75 cursor-grab active:cursor-grabbing"
-									style="transform: translateX({swipingBuyer ? buyerCurrentDeltaX : 0}px);"
-									onpointerdown={handleBuyerPointerDown}
-									onpointermove={handleBuyerPointerMove}
-									onpointerup={handleBuyerPointerUp}
-									onpointercancel={handleBuyerPointerUp}
-								>
-									<div class="flex items-center gap-2.5 min-w-0">
-										<div class="w-8 h-8 bg-emerald-600 text-white border-2 border-black flex items-center justify-center shrink-0">
-											<User class="w-4 h-4" />
-										</div>
-										<div class="min-w-0">
-											<div class="text-xs font-black uppercase text-black truncate">
-												{currentBuyer.name || 'Zákazník'}
-											</div>
-											<div class="text-[11px] font-mono font-bold text-emerald-800 truncate">
-												{currentBuyer.email}
-											</div>
-										</div>
-									</div>
-
-									<div class="flex items-center gap-2 shrink-0">
-										<span class="hidden sm:inline text-[9px] font-bold text-neutral-500 uppercase">
-											POTAŽENÍM DOPRAVA ODPOJIT
-										</span>
-										<button
-											type="button"
-											onclick={unlinkBuyer}
-											class="p-1 border border-black bg-white hover:bg-neutral-100 text-black cursor-pointer"
-											title="Odpojit kupujícího"
-										>
-											<X class="w-3.5 h-3.5" />
-										</button>
-									</div>
-								</div>
-							</div>
-						{:else}
-							<!-- No buyer hint -->
-							<div class="p-2.5 border-2 border-dashed border-neutral-300 bg-neutral-50 text-neutral-600 text-xs flex items-center justify-between">
-								<span class="text-[11px] font-bold uppercase">
-									Kupující nepřiřazen (lze naskenovat kód z mobilu nebo zadat při platbě)
-								</span>
-							</div>
-						{/if}
+			<!-- EXPANDED CONTENT (Scrollable & always mounted for silky smooth sliding) -->
+			<div
+				bind:this={sheetScrollContainer}
+				role="region"
+				aria-label="Položky košíku"
+				onpointerdown={handleContentPointerDown}
+				onpointermove={handleContentPointerMove}
+				onpointerup={handleContentPointerUp}
+				onpointercancel={handleContentPointerUp}
+				class="flex-1 overflow-y-auto p-4 space-y-4"
+				inert={!sheetExpanded ? true : undefined}
+			>
+				<!-- BUYER CARD SECTION -->
+				<div>
+					<div class="text-[10px] font-black uppercase tracking-wider text-neutral-500 mb-1.5">
+						KUPUJÍCÍ
 					</div>
-
-					<!-- BOOKS LIST SECTION -->
-					<div>
-						<div class="flex items-center justify-between text-[10px] font-black uppercase tracking-wider text-neutral-500 mb-1.5">
-							<span>POLOŽKY V KOŠÍKU ({cartBooks.length})</span>
-							<span>POTAŽENÍM DOPRAVA ODSTRANIT</span>
-						</div>
-
-						{#if cartBooks.length === 0}
-							<div class="p-8 border-2 border-dashed border-neutral-300 text-center text-neutral-500 text-xs font-bold uppercase">
-								Košík je prázdný.<br />
-								Namiřte kameru na knihy pro automatické přidání.
-							</div>
-						{:else}
-							<div class="space-y-2">
-								{#each cartBooks as book (book.id)}
-									{@const col = idToColor(book.id)}
-									<!-- Swipeable Book Card -->
-									<div class="relative overflow-hidden border-2 border-black bg-white select-none">
-										<!-- Red track revealed on swipe right -->
-										<div class="absolute inset-0 bg-red-600 flex items-center px-4 gap-2 text-white font-black text-xs uppercase">
-											<Trash2 class="w-4 h-4" />
-											<span>ODSTRANIT Z KOŠÍKU</span>
-										</div>
-
-										<!-- Foreground row -->
-										<div
-											role="presentation"
-											class="relative bg-white p-2.5 flex items-center justify-between gap-3 transition-transform duration-75 cursor-grab active:cursor-grabbing"
-											style="transform: translateX({swipingBookId === book.id ? swipeCurrentDeltaX : 0}px);"
-											onpointerdown={(e) => handleBookPointerDown(e, book.id)}
-											onpointermove={(e) => handleBookPointerMove(e, book.id)}
-											onpointerup={(e) => handleBookPointerUp(e, book.id)}
-											onpointercancel={(e) => handleBookPointerUp(e, book.id)}
-										>
-											<div class="flex items-center gap-3 min-w-0">
-												<!-- Hash-derived Color Stripe Badge -->
-												<div
-													class="w-3.5 h-12 border border-black shrink-0"
-													style="background-color: {col.bg};"
-												></div>
-
-												<!-- Cover Thumbnail (Tap to enlarge!) -->
-												<button
-													type="button"
-													onclick={(e) => {
-														e.stopPropagation();
-														previewBook = book;
-													}}
-													class="relative w-10 h-12 border border-black bg-neutral-100 overflow-hidden shrink-0 group cursor-pointer"
-													title="Kliknutím zvětšit náhled obálky"
-												>
-													{#if book.photo}
-														<img
-															src={getBookThumbnailUrl(book)}
-															alt={book.id}
-															class="w-full h-full object-cover"
-														/>
-														<div class="absolute inset-0 bg-black/30 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
-															<ZoomIn class="w-3.5 h-3.5 text-white" />
-														</div>
-													{/if}
-												</button>
-
-												<!-- Book Details -->
-												<div class="min-w-0">
-													<div class="flex items-center gap-1.5">
-														<span
-															class="px-1.5 py-0.2 border text-[10px] font-black uppercase text-white"
-															style="background-color: {col.bg}; border-color: {col.border};"
-														>
-															{book.id}
-														</span>
-													</div>
-													<div class="text-[11px] font-bold text-neutral-500 uppercase mt-0.5">
-														STAV: {book.status}
-													</div>
-												</div>
-											</div>
-
-											<div class="flex items-center gap-3 shrink-0">
-												<div class="text-base font-black text-black">
-													{book.price} Kč
-												</div>
-
-												<!-- Fallback Delete Button -->
-												<button
-													type="button"
-													onclick={() => removeBookFromCart(book.id)}
-													class="p-1.5 border border-black bg-neutral-100 hover:bg-red-100 hover:text-red-700 transition-colors cursor-pointer"
-													title="Smazat knihu"
-												>
-													<Trash2 class="w-3.5 h-3.5" />
-												</button>
-											</div>
-										</div>
-									</div>
-								{/each}
-							</div>
-						{/if}
-					</div>
-
-					<!-- Expanded Bottom Action -->
-					<div class="pt-3 border-t-2 border-black flex items-center justify-between gap-3">
-						<div>
-							<div class="text-[10px] font-bold uppercase text-neutral-500">CELKEM:</div>
-							<div class="text-2xl font-black text-black">{totalAmount} Kč</div>
-						</div>
-
-						<button
-							type="button"
-							onclick={openCheckoutModal}
-							disabled={cartBooks.length === 0}
-							class="py-3 px-6 bg-black text-white hover:bg-neutral-800 font-black text-xs uppercase tracking-wider border-2 border-black flex items-center gap-2 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+					{#if currentBuyer}
+						{@const isBuyerSwiping = swipingItemId === 'buyer'}
+						{@const isBuyerRemoving = removingItemIds.has('buyer')}
+						<!-- Swipeable Buyer Card Container with collapse animation -->
+						<div
+							data-item-row
+							class="relative overflow-hidden border-2 border-black bg-emerald-50 select-none transition-all duration-200 ease-out {isBuyerRemoving ? 'opacity-0 translate-x-full max-h-0 !my-0 !py-0 !border-0' : 'max-h-24'}"
 						>
-							<Banknote class="w-4 h-4" />
-							<span>PŘEJÍT K PLATBĚ ({totalAmount} Kč)</span>
-						</button>
-					</div>
+							<!-- Red track revealed on swipe right -->
+							<div
+								class="absolute inset-0 bg-red-600 flex items-center px-4 gap-2 text-white font-black text-xs uppercase transition-opacity duration-100"
+								style="opacity: {isBuyerSwiping ? Math.min(1, Math.max(0, swipeDeltaX / 50)) : 0};"
+							>
+								<UserMinus class="w-4 h-4 shrink-0" />
+								<span>ODPOJIT KUPUJÍCÍHO</span>
+							</div>
+
+							<!-- Foreground sliding card -->
+							<div
+								role="presentation"
+								class="relative bg-emerald-50 p-3 flex items-center justify-between gap-3 cursor-grab active:cursor-grabbing touch-pan-y {isBuyerSwiping ? '' : 'transition-transform duration-200 ease-out'}"
+								style="transform: translateX({isBuyerSwiping ? swipeDeltaX : 0}px);"
+								onpointerdown={(e) => handleItemPointerDown(e, 'buyer')}
+								onpointermove={(e) => handleItemPointerMove(e, 'buyer')}
+								onpointerup={(e) => handleItemPointerUp(e, 'buyer', true)}
+								onpointercancel={(e) => handleItemPointerUp(e, 'buyer', true)}
+							>
+								<div class="flex items-center gap-2.5 min-w-0">
+									<div class="w-8 h-8 bg-emerald-600 text-white border-2 border-black flex items-center justify-center shrink-0">
+										<User class="w-4 h-4" />
+									</div>
+									<div class="min-w-0">
+										<div class="text-xs font-black uppercase text-black truncate">
+											{currentBuyer.name || 'Zákazník'}
+										</div>
+										<div class="text-[11px] font-mono font-bold text-emerald-800 truncate">
+											{currentBuyer.email}
+										</div>
+									</div>
+								</div>
+
+								<div class="flex items-center gap-2 shrink-0">
+									<span class="hidden sm:inline text-[9px] font-bold text-neutral-500 uppercase">
+										POTAŽENÍM DOPRAVA ODPOJIT
+									</span>
+									<!-- Explicit 1-tap Unlink Button -->
+									<button
+										type="button"
+										onclick={(e) => {
+											e.stopPropagation();
+											triggerUnlinkBuyer();
+										}}
+										class="p-1.5 border-2 border-black bg-white hover:bg-red-600 hover:text-white text-black transition-colors cursor-pointer shrink-0 active:scale-95"
+										title="Odpojit kupujícího"
+									>
+										<X class="w-4 h-4" />
+									</button>
+								</div>
+							</div>
+						</div>
+					{:else}
+						<!-- No buyer hint -->
+						<div class="p-2.5 border-2 border-dashed border-neutral-300 bg-neutral-50 text-neutral-600 text-xs flex items-center justify-between">
+							<span class="text-[11px] font-bold uppercase">
+								Kupující nepřiřazen (lze naskenovat kód z mobilu nebo zadat při platbě)
+							</span>
+						</div>
+					{/if}
 				</div>
-			{/if}
+
+				<!-- BOOKS LIST SECTION -->
+				<div>
+					<div class="flex items-center justify-between text-[10px] font-black uppercase tracking-wider text-neutral-500 mb-1.5">
+						<span>POLOŽKY V KOŠÍKU ({cartBooks.length})</span>
+						<span>POTAŽENÍM DOPRAVA ODSTRANIT</span>
+					</div>
+
+					{#if cartBooks.length === 0}
+						<div class="p-8 border-2 border-dashed border-neutral-300 text-center text-neutral-500 text-xs font-bold uppercase">
+							Košík je prázdný.<br />
+							Namiřte kameru na knihy pro automatické přidání.
+						</div>
+					{:else}
+						<div class="space-y-2">
+							{#each cartBooks as book (book.id)}
+								{@const col = idToColor(book.id)}
+								{@const isSwiping = swipingItemId === book.id}
+								{@const isRemoving = removingItemIds.has(book.id)}
+								<!-- Swipeable Book Card Container with collapse animation -->
+								<div
+									data-item-row
+									class="relative overflow-hidden border-2 border-black bg-white select-none transition-all duration-200 ease-out {isRemoving ? 'opacity-0 translate-x-full max-h-0 !my-0 !py-0 !border-0' : 'max-h-28'}"
+								>
+									<!-- Red track revealed on swipe right -->
+									<div
+										class="absolute inset-0 bg-red-600 flex items-center px-4 gap-2 text-white font-black text-xs uppercase transition-opacity duration-100"
+										style="opacity: {isSwiping ? Math.min(1, Math.max(0, swipeDeltaX / 50)) : 0};"
+									>
+										<Trash2 class="w-4 h-4 shrink-0" />
+										<span>ODSTRANIT Z KOŠÍKU</span>
+									</div>
+
+									<!-- Foreground sliding row -->
+									<div
+										role="presentation"
+										class="relative bg-white p-2.5 flex items-center justify-between gap-3 cursor-grab active:cursor-grabbing touch-pan-y {isSwiping ? '' : 'transition-transform duration-200 ease-out'}"
+										style="transform: translateX({isSwiping ? swipeDeltaX : 0}px);"
+										onpointerdown={(e) => handleItemPointerDown(e, book.id)}
+										onpointermove={(e) => handleItemPointerMove(e, book.id)}
+										onpointerup={(e) => handleItemPointerUp(e, book.id)}
+										onpointercancel={(e) => handleItemPointerUp(e, book.id)}
+									>
+										<div class="flex items-center gap-3 min-w-0">
+											<!-- Hash-derived Color Stripe Badge -->
+											<div
+												class="w-3.5 h-12 border border-black shrink-0"
+												style="background-color: {col.bg};"
+											></div>
+
+											<!-- Cover Thumbnail (Tap to enlarge!) -->
+											<button
+												type="button"
+												onclick={(e) => {
+													e.stopPropagation();
+													previewBook = book;
+												}}
+												class="relative w-10 h-12 border border-black bg-neutral-100 overflow-hidden shrink-0 group cursor-pointer"
+												title="Kliknutím zvětšit náhled obálky"
+											>
+												{#if book.photo}
+													<img
+														src={getBookThumbnailUrl(book)}
+														alt={book.id}
+														class="w-full h-full object-cover"
+													/>
+													<div class="absolute inset-0 bg-black/30 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
+														<ZoomIn class="w-3.5 h-3.5 text-white" />
+													</div>
+												{/if}
+											</button>
+
+											<!-- Book Details -->
+											<div class="min-w-0">
+												<div class="flex items-center gap-1.5">
+													<span
+														class="px-1.5 py-0.2 border text-[10px] font-black uppercase text-white"
+														style="background-color: {col.bg}; border-color: {col.border};"
+													>
+														{book.id}
+													</span>
+												</div>
+												<div class="text-[11px] font-bold text-neutral-500 uppercase mt-0.5">
+													STAV: {book.status}
+												</div>
+											</div>
+										</div>
+
+										<div class="flex items-center gap-3 shrink-0">
+											<div class="text-base font-black text-black">
+												{book.price} Kč
+											</div>
+
+											<!-- Explicit 1-tap Trash Can Button -->
+											<button
+												type="button"
+												onclick={(e) => {
+													e.stopPropagation();
+													triggerRemoveBook(book.id);
+												}}
+												class="p-2 border-2 border-black bg-neutral-100 hover:bg-red-600 hover:text-white transition-colors cursor-pointer shrink-0 active:scale-95"
+												title="Smazat knihu z košíku"
+											>
+												<Trash2 class="w-4 h-4" />
+											</button>
+										</div>
+									</div>
+								</div>
+							{/each}
+						</div>
+					{/if}
+				</div>
+
+				<!-- Expanded Bottom Action -->
+				<div class="pt-3 border-t-2 border-black flex items-center justify-between gap-3">
+					<div>
+						<div class="text-[10px] font-bold uppercase text-neutral-500">CELKEM:</div>
+						<div class="text-2xl font-black text-black">{totalAmount} Kč</div>
+					</div>
+
+					<button
+						type="button"
+						onclick={openCheckoutModal}
+						disabled={cartBooks.length === 0}
+						class="py-3 px-6 bg-black text-white hover:bg-neutral-800 font-black text-xs uppercase tracking-wider border-2 border-black flex items-center gap-2 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+					>
+						<Banknote class="w-4 h-4" />
+						<span>PŘEJÍT K PLATBĚ ({totalAmount} Kč)</span>
+					</button>
+				</div>
+			</div>
 		</div>
 	{/if}
 

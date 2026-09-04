@@ -40,6 +40,17 @@
 		return 'checking';
 	}
 
+	function getStatusPriority(status: 'checking' | 'available' | 'used'): number {
+		switch (status) {
+			case 'available':
+				return 2;
+			case 'checking':
+				return 1;
+			case 'used':
+				return 0;
+		}
+	}
+
 	let priceInput = $state<number | ''>('');
 	let capturedPhotoBlob = $state<Blob | null>(null);
 	let photoPreviewUrl = $state<string | null>(null);
@@ -175,19 +186,27 @@
 					}
 				}
 
-				// Pick best code closest to center of the video frame
+				// Pick best code closest to center of the video frame, prioritizing available > checking > used
 				if (trackedMatches.size > 0 && videoElement) {
 					let bestMatch: ScanMatch | null = null;
 					let bestCode: string | null = null;
+					let bestPriority = -1;
 					let minCenterDist = Infinity;
 					const centerX = videoElement.videoWidth / 2;
 					const centerY = videoElement.videoHeight / 2;
 
 					for (const [code, item] of trackedMatches.entries()) {
+						const status = getCodeStatus(code);
+						const priority = getStatusPriority(status);
 						const boxCenterX = item.match.box.x + item.match.box.width / 2;
 						const boxCenterY = item.match.box.y + item.match.box.height / 2;
 						const dist = Math.hypot(boxCenterX - centerX, boxCenterY - centerY);
-						if (dist < minCenterDist) {
+
+						if (
+							priority > bestPriority ||
+							(priority === bestPriority && dist < minCenterDist)
+						) {
+							bestPriority = priority;
 							minCenterDist = dist;
 							bestMatch = item.match;
 							bestCode = code;
@@ -264,6 +283,11 @@
 				for (const [code, item] of trackedMatches.entries()) {
 					if (now - item.lastSeen < 450) {
 						const status = getCodeStatus(code);
+						// Do not highlight unavailable/used codes if they are not the active/selected one
+						if (status === 'used' && code !== activeDetectedCode) {
+							continue;
+						}
+
 						let color = '#10b981'; // Green for available
 						if (status === 'used') {
 							color = '#ef4444'; // Red for used
