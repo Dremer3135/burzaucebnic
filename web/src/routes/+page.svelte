@@ -14,7 +14,7 @@
 	});
 </script>
 
-<div class="flex-1 flex flex-col items-center justify-center p-4 bg-white text-black">
+<div class="flex-1 flex flex-col items-center justify-center p-4 bg-white text-black overflow-y-auto">
 	{#if !auth.user}
 		<div class="w-full flex justify-center py-6">
 			<LoginModal />

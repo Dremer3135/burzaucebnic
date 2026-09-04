@@ -40,16 +40,18 @@ export const SCAN_OPTIONS: ReaderOptions = {
 export function getVideoTransform(
 	videoW: number,
 	videoH: number,
-	containerW: number,
-	containerH: number
+	elementW: number,
+	elementH: number,
+	offsetX = 0,
+	offsetY = 0
 ): VideoTransform {
-	if (!videoW || !videoH || !containerW || !containerH) {
+	if (!videoW || !videoH || !elementW || !elementH) {
 		return { scale: 1, offsetX: 0, offsetY: 0 };
 	}
-	const scale = Math.max(containerW / videoW, containerH / videoH);
-	const offsetX = (containerW - videoW * scale) / 2;
-	const offsetY = (containerH - videoH * scale) / 2;
-	return { scale, offsetX, offsetY };
+	const scale = Math.max(elementW / videoW, elementH / videoH);
+	const totalOffsetX = (elementW - videoW * scale) / 2 + offsetX;
+	const totalOffsetY = (elementH - videoH * scale) / 2 + offsetY;
+	return { scale, offsetX: totalOffsetX, offsetY: totalOffsetY };
 }
 
 export async function scanFrameForDataMatrix(
@@ -214,11 +216,39 @@ export function drawBoundingBox(
 	ctx.restore();
 }
 
+export interface PolygonColor {
+	bg: string;
+	border: string;
+	text: string;
+	lightBg: string;
+}
+
+export function idToColor(id: string): PolygonColor {
+	let hash = 0;
+	for (let i = 0; i < id.length; i++) {
+		hash = (hash << 5) - hash + id.charCodeAt(i);
+		hash |= 0;
+	}
+	const hue = Math.abs(hash) % 360;
+	return {
+		bg: `hsl(${hue}, 80%, 38%)`,
+		border: `hsl(${hue}, 90%, 22%)`,
+		text: '#ffffff',
+		lightBg: `hsl(${hue}, 65%, 92%)`
+	};
+}
+
 export function drawPricePolygon(
 	ctx: CanvasRenderingContext2D,
 	pos: Position,
 	priceText: string,
-	transform: VideoTransform
+	transform: VideoTransform,
+	color: PolygonColor = {
+		bg: '#ffffff',
+		border: '#000000',
+		text: '#000000',
+		lightBg: '#f5f5f5'
+	}
 ) {
 	const { scale, offsetX, offsetY } = transform;
 
@@ -229,7 +259,7 @@ export function drawPricePolygon(
 
 	ctx.save();
 
-	// 1. Draw solid opaque white polygon
+	// 1. Draw solid opaque colored polygon
 	ctx.beginPath();
 	ctx.moveTo(p1.x, p1.y);
 	ctx.lineTo(p2.x, p2.y);
@@ -237,12 +267,12 @@ export function drawPricePolygon(
 	ctx.lineTo(p4.x, p4.y);
 	ctx.closePath();
 
-	ctx.fillStyle = '#ffffff';
+	ctx.fillStyle = color.bg;
 	ctx.fill();
 
-	// 2. Sharp 2px black border
-	ctx.lineWidth = 2;
-	ctx.strokeStyle = '#000000';
+	// 2. Sharp border
+	ctx.lineWidth = 2.5;
+	ctx.strokeStyle = color.border;
 	ctx.lineJoin = 'miter';
 	ctx.stroke();
 
@@ -273,7 +303,7 @@ export function drawPricePolygon(
 	ctx.translate(centerX, centerY);
 	ctx.rotate(angle);
 
-	ctx.fillStyle = '#000000';
+	ctx.fillStyle = color.text;
 	ctx.font = `900 ${fontSize}px ui-sans-serif, system-ui, -apple-system, sans-serif`;
 	ctx.textAlign = 'center';
 	ctx.textBaseline = 'middle';

@@ -15,6 +15,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	crand "crypto/rand"
 
 	"github.com/pocketbase/dbx"
 	"github.com/pocketbase/pocketbase"
@@ -866,7 +867,7 @@ func registerApiEndpoints(e *core.ServeEvent) {
 		})
 	}).Bind(apis.RequireAuth("users"))
 
-	// POST /api/cashier/confirm-payment - Confirm a pending QR payment
+	// POST /api/cashier/confirm-payment - Confirm a pending QR/cash payment
 	e.Router.POST("/api/cashier/confirm-payment", func(c *core.RequestEvent) error {
 		authRecord := c.Auth
 		if authRecord == nil || !authRecord.GetBool("isCashier") {
@@ -875,6 +876,7 @@ func registerApiEndpoints(e *core.ServeEvent) {
 
 		var req struct {
 			PaymentId string `json:"paymentId"`
+			Method    string `json:"method"`
 		}
 		if err := c.BindBody(&req); err != nil || req.PaymentId == "" {
 			return c.BadRequestError("Chybí paymentId.", nil)
@@ -919,6 +921,9 @@ func registerApiEndpoints(e *core.ServeEvent) {
 			}
 
 			payment.Set("status", "completed")
+			if req.Method != "" {
+				payment.Set("method", req.Method)
+			}
 			payment.Set("cashier", authRecord.Id)
 			if err := txApp.Save(payment); err != nil {
 				return fmt.Errorf("chyba při ukládání platby: %w", err)
@@ -933,6 +938,260 @@ func registerApiEndpoints(e *core.ServeEvent) {
 
 		return c.JSON(http.StatusOK, map[string]any{"success": true})
 	}).Bind(apis.RequireAuth("users"))
+
+	// GET /api/cashier/user-search?query={query} - Autocomplete users by email or name
+	e.Router.GET("/api/cashier/user-search", func(c *core.RequestEvent) error {
+		authRecord := c.Auth
+		if authRecord == nil || !authRecord.GetBool("isCashier") {
+			return c.ForbiddenError("Pouze pokladní má přístup k této funkci.", nil)
+		}
+
+		query := strings.TrimSpace(c.Request.URL.Query().Get("query"))
+		if query == "" {
+			return c.JSON(http.StatusOK, []any{})
+		}
+
+		qLower := strings.ToLower(query)
+		var records []*core.Record
+		err := c.App.RecordQuery("users").
+			Where(dbx.Or(
+				dbx.NewExp("LOWER(email) LIKE {:q}", dbx.Params{"q": "%" + qLower + "%"}),
+				dbx.NewExp("LOWER(name) LIKE {:q}", dbx.Params{"q": "%" + qLower + "%"}),
+			)).
+			Limit(10).
+			All(&records)
+		if err != nil {
+			return c.InternalServerError(err.Error(), nil)
+		}
+
+		type userItem struct {
+			Id    string `json:"id"`
+			Email string `json:"email"`
+			Name  string `json:"name"`
+		}
+
+		items := make([]userItem, 0, len(records))
+		for _, u := range records {
+			items = append(items, userItem{
+				Id:    u.Id,
+				Email: u.GetString("email"),
+				Name:  u.GetString("name"),
+			})
+		}
+
+		return c.JSON(http.StatusOK, items)
+	}).Bind(apis.RequireAuth("users"))
+
+	// GET /api/cashier/lookup-code?code={code} - Fast lookup whether code is user or book
+	e.Router.GET("/api/cashier/lookup-code", func(c *core.RequestEvent) error {
+		authRecord := c.Auth
+		if authRecord == nil || !authRecord.GetBool("isCashier") {
+			return c.ForbiddenError("Pouze pokladní má přístup k této funkci.", nil)
+		}
+
+		code := strings.TrimSpace(c.Request.URL.Query().Get("code"))
+		if code == "" {
+			return c.BadRequestError("Chybí kód.", nil)
+		}
+
+		// 1. Check if user
+		if user, err := c.App.FindRecordById("users", code); err == nil && user != nil {
+			return c.JSON(http.StatusOK, map[string]any{
+				"type": "user",
+				"user": map[string]any{
+					"id":    user.Id,
+					"name":  user.GetString("name"),
+					"email": user.GetString("email"),
+				},
+			})
+		}
+
+		// 2. Check if book
+		if book, err := c.App.FindRecordById("books", code); err == nil && book != nil {
+			return c.JSON(http.StatusOK, map[string]any{
+				"type": "book",
+				"book": map[string]any{
+					"id":             book.Id,
+					"price":          book.GetFloat("price"),
+					"photo":          book.GetString("photo"),
+					"status":         book.GetString("status"),
+					"seller":         book.GetString("seller"),
+					"collectionId":   book.Collection().Id,
+					"collectionName": "books",
+				},
+			})
+		}
+
+		return c.JSON(http.StatusOK, map[string]any{
+			"type": "unknown",
+		})
+	}).Bind(apis.RequireAuth("users"))
+
+	// POST /api/cashier/checkout - Cashier checkout: resolve/create buyer, reserve books, create pending payment with VS
+	e.Router.POST("/api/cashier/checkout", func(c *core.RequestEvent) error {
+		authRecord := c.Auth
+		if authRecord == nil || !authRecord.GetBool("isCashier") {
+			return c.ForbiddenError("Pouze pokladní má přístup k této funkci.", nil)
+		}
+
+		var req struct {
+			Email   string   `json:"email"`
+			Name    string   `json:"name"`
+			BuyerId string   `json:"buyerId"`
+			BookIds []string `json:"bookIds"`
+		}
+		if err := c.BindBody(&req); err != nil || len(req.BookIds) == 0 {
+			return c.BadRequestError("Musíte uvést alespoň jednu knihu.", nil)
+		}
+
+		req.Email = strings.TrimSpace(req.Email)
+		req.BuyerId = strings.TrimSpace(req.BuyerId)
+		if req.Email == "" && req.BuyerId == "" {
+			return c.BadRequestError("Musíte uvést email nebo ID kupujícího.", nil)
+		}
+
+		var createdPayment *core.Record
+		var buyerUser *core.Record
+
+		err := c.App.RunInTransaction(func(txApp core.App) error {
+			// 1. Locate or create buyer
+			if req.BuyerId != "" {
+				buyerUser, _ = txApp.FindRecordById("users", req.BuyerId)
+			}
+			if buyerUser == nil && req.Email != "" {
+				buyerUser, _ = txApp.FindAuthRecordByEmail("users", req.Email)
+			}
+			if buyerUser == nil {
+				// Auto-create user
+				usersColl, err := txApp.FindCollectionByNameOrId("users")
+				if err != nil {
+					return fmt.Errorf("kolekce users nenalezena: %w", err)
+				}
+				buyerUser = core.NewRecord(usersColl)
+				username := strings.ToLower(strings.Split(req.Email, "@")[0])
+				cleanedUser := ""
+				for _, r := range username {
+					if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '_' {
+						cleanedUser += string(r)
+					}
+				}
+				if len(cleanedUser) < 3 {
+					cleanedUser = "zakaznik"
+				}
+				buyerUser.Set("username", fmt.Sprintf("%s_%s", cleanedUser, randomAlphaNum(5)))
+				buyerUser.SetEmail(req.Email)
+				buyerUser.SetPassword(randomAlphaNum(16))
+				if req.Name != "" {
+					buyerUser.Set("name", req.Name)
+				} else {
+					buyerUser.Set("name", strings.Split(req.Email, "@")[0])
+				}
+				buyerUser.SetVerified(true)
+				if err := txApp.Save(buyerUser); err != nil {
+					return fmt.Errorf("chyba při vytváření účtu kupujícího: %w", err)
+				}
+			}
+
+			// 2. Lock VS and compute next sequential VS
+			vsLock.Lock()
+			defer vsLock.Unlock()
+
+			var maxVS int
+			_ = txApp.DB().Select("COALESCE(MAX(variableSymbol), 10000)").From("payments").Row(&maxVS)
+			nextVS := maxVS + 1
+
+			// 3. Verify books and update to checkout
+			var totalAmount float64
+			for _, bookId := range req.BookIds {
+				b, err := txApp.FindRecordById("books", bookId)
+				if err != nil || b == nil {
+					return c.NotFoundError(fmt.Sprintf("Kniha s ID '%s' nebyla nalezena.", bookId), nil)
+				}
+
+				status := b.GetString("status")
+				currentBuyer := b.GetString("buyer")
+				if status != "available" && !(status == "checkout" && currentBuyer == buyerUser.Id) {
+					return router.NewApiError(http.StatusConflict, fmt.Sprintf("Kniha '%s' již není dostupná (stav: %s).", b.Id, status), nil)
+				}
+
+				totalAmount += b.GetFloat("price")
+				b.Set("status", "checkout")
+				b.Set("buyer", buyerUser.Id)
+				b.Set("checkoutExpiresAt", "")
+				if err := txApp.Save(b); err != nil {
+					return fmt.Errorf("chyba při ukládání knihy: %w", err)
+				}
+			}
+
+			// 4. Update buyer's buy relation
+			existingBuy := buyerUser.GetStringSlice("buy")
+			buyMap := make(map[string]bool)
+			for _, b := range existingBuy {
+				buyMap[b] = true
+			}
+			for _, b := range req.BookIds {
+				buyMap[b] = true
+			}
+			updatedBuy := make([]string, 0, len(buyMap))
+			for b := range buyMap {
+				updatedBuy = append(updatedBuy, b)
+			}
+			buyerUser.Set("buy", updatedBuy)
+			if err := txApp.Save(buyerUser); err != nil {
+				return fmt.Errorf("chyba při aktualizaci uživatele: %w", err)
+			}
+
+			// 5. Create payment record
+			paymentsColl, err := txApp.FindCollectionByNameOrId("payments")
+			if err != nil {
+				return err
+			}
+
+			createdPayment = core.NewRecord(paymentsColl)
+			createdPayment.Set("variableSymbol", nextVS)
+			createdPayment.Set("buyer", buyerUser.Id)
+			createdPayment.Set("books", req.BookIds)
+			createdPayment.Set("totalAmount", totalAmount)
+			createdPayment.Set("method", "qr")
+			createdPayment.Set("status", "pending")
+			createdPayment.Set("cashier", authRecord.Id)
+
+			if err := txApp.Save(createdPayment); err != nil {
+				return fmt.Errorf("chyba při vytváření záznamu platby: %w", err)
+			}
+
+			return nil
+		})
+
+		if err != nil {
+			return err
+		}
+
+		activeEvent, _ := c.App.FindFirstRecordByData("events", "active", true)
+
+		return c.JSON(http.StatusOK, map[string]any{
+			"success": true,
+			"payment": createdPayment,
+			"buyer": map[string]any{
+				"id":    buyerUser.Id,
+				"name":  buyerUser.GetString("name"),
+				"email": buyerUser.GetString("email"),
+			},
+			"event": activeEvent,
+		})
+	}).Bind(apis.RequireAuth("users"))
+}
+
+func randomAlphaNum(n int) string {
+	const letters = "abcdefghijklmnopqrstuvwxyz0123456789"
+	b := make([]byte, n)
+	if _, err := crand.Read(b); err != nil {
+		return fmt.Sprintf("%d", time.Now().UnixNano())[:n]
+	}
+	for i, v := range b {
+		b[i] = letters[v%byte(len(letters))]
+	}
+	return string(b)
 }
 
 // startCheckoutReaper runs every 30 seconds to release expired reservations

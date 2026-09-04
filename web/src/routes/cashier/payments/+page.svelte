@@ -83,7 +83,7 @@
 	}
 </script>
 
-<div class="flex-1 max-w-4xl w-full mx-auto p-4 flex flex-col pb-24 bg-white text-black">
+<div class="flex-1 max-w-4xl w-full mx-auto p-4 flex flex-col pb-24 bg-white text-black overflow-y-auto">
 	<!-- Top Navigation Bar between Scanner and Payments -->
 	<div class="flex items-center justify-between bg-white border-2 border-black p-1 mb-6 text-black">
 		<a

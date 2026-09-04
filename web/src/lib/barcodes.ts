@@ -1,13 +1,13 @@
 import bwipjs from 'bwip-js';
 import QRCode from 'qrcode';
 
-export function renderDataMatrix(canvas: HTMLCanvasElement, text: string): Promise<void> {
+export function renderDataMatrix(canvas: HTMLCanvasElement, text: string, scale = 6): Promise<void> {
 	return new Promise((resolve, reject) => {
 		try {
 			bwipjs.toCanvas(canvas, {
 				bcid: 'datamatrix',
 				text: text,
-				scale: 6,
+				scale: scale,
 				backgroundcolor: 'ffffff'
 			});
 			resolve();

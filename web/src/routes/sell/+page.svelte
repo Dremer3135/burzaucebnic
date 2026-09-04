@@ -7,7 +7,9 @@
 		scanFrameForDataMatrix,
 		capturePhotoFromVideo,
 		drawBoundingBox,
-		CAMERA_CONSTRAINTS
+		getVideoTransform,
+		CAMERA_CONSTRAINTS,
+		type ScanMatch
 	} from '$lib/scanner';
 	import { Plus, Camera, Check, X, Tag, AlertCircle, RefreshCw, ChevronLeft } from '@lucide/svelte';
 	import type { Book } from '$lib/types';
@@ -17,14 +19,20 @@
 	let step = $state<'SCAN_CODE' | 'CAPTURE_COVER' | 'ENTER_PRICE'>('SCAN_CODE');
 
 	let scannedCode = $state('');
+	let activeDetectedCode = $state<string | null>(null);
+	let activeMatch = $state<ScanMatch | null>(null);
+	let lastSeenCodeTime = 0;
+
 	let priceInput = $state<number | ''>('');
 	let capturedPhotoBlob = $state<Blob | null>(null);
 	let photoPreviewUrl = $state<string | null>(null);
 
 	let videoElement = $state<HTMLVideoElement | null>(null);
 	let canvasElement = $state<HTMLCanvasElement | null>(null);
+	let overlayCanvas = $state<HTMLCanvasElement | null>(null);
 	let mediaStream = $state<MediaStream | null>(null);
 	let scanAnimationId = $state<number | null>(null);
+	let renderAnimId = $state<number | null>(null);
 
 	let errorMessage = $state('');
 	let isSubmitting = $state(false);
@@ -56,6 +64,9 @@
 		}
 		step = 'SCAN_CODE';
 		scannedCode = '';
+		activeDetectedCode = null;
+		activeMatch = null;
+		lastSeenCodeTime = 0;
 		priceInput = '';
 		capturedPhotoBlob = null;
 		if (photoPreviewUrl) URL.revokeObjectURL(photoPreviewUrl);
@@ -69,6 +80,8 @@
 	function closeSellModal() {
 		stopCamera();
 		isModalOpen = false;
+		activeDetectedCode = null;
+		activeMatch = null;
 		if (photoPreviewUrl) URL.revokeObjectURL(photoPreviewUrl);
 		photoPreviewUrl = null;
 	}
@@ -81,7 +94,10 @@
 			if (videoElement) {
 				videoElement.srcObject = stream;
 				await videoElement.play();
-				startScanningLoop();
+				if (step === 'SCAN_CODE') {
+					startScanningLoop();
+					startRenderLoop();
+				}
 			}
 		} catch (err: any) {
 			console.error('Camera access error', err);
@@ -94,6 +110,10 @@
 			cancelAnimationFrame(scanAnimationId);
 			scanAnimationId = null;
 		}
+		if (renderAnimId) {
+			cancelAnimationFrame(renderAnimId);
+			renderAnimId = null;
+		}
 		if (mediaStream) {
 			mediaStream.getTracks().forEach((t) => t.stop());
 			mediaStream = null;
@@ -104,20 +124,30 @@
 	let lastScanTime = 0;
 
 	async function startScanningLoop() {
-		if (!videoElement || !canvasElement || !isModalOpen) return;
+		if (!videoElement || !canvasElement || !isModalOpen || step !== 'SCAN_CODE') return;
 
 		const now = performance.now();
-		if (step === 'SCAN_CODE' && !isScanningFrame && now - lastScanTime >= 65 && videoElement.videoWidth > 0) {
+		if (!isScanningFrame && now - lastScanTime >= 65 && videoElement.videoWidth > 0) {
 			isScanningFrame = true;
 			lastScanTime = now;
 			try {
 				const match = await scanFrameForDataMatrix(canvasElement, videoElement);
+				const seenTime = performance.now();
 				if (match && match.text) {
-					if (navigator.vibrate) navigator.vibrate([100]);
-
-					scannedCode = match.text.trim();
-					step = 'CAPTURE_COVER';
-					return;
+					const code = match.text.trim();
+					if (code) {
+						if (activeDetectedCode !== code && navigator.vibrate) {
+							navigator.vibrate([60]);
+						}
+						activeDetectedCode = code;
+						activeMatch = match;
+						lastSeenCodeTime = seenTime;
+					}
+				} else {
+					if (activeDetectedCode && seenTime - lastSeenCodeTime > 2500) {
+						activeDetectedCode = null;
+						activeMatch = null;
+					}
 				}
 			} catch (err) {
 				console.error(err);
@@ -126,7 +156,70 @@
 			}
 		}
 
-		scanAnimationId = requestAnimationFrame(startScanningLoop);
+		if (isModalOpen && step === 'SCAN_CODE') {
+			scanAnimationId = requestAnimationFrame(startScanningLoop);
+		}
+	}
+
+	function startRenderLoop() {
+		if (!isModalOpen || step !== 'SCAN_CODE') return;
+
+		if (overlayCanvas && videoElement && videoElement.videoWidth > 0) {
+			const dpr = window.devicePixelRatio || 1;
+			const cRect = overlayCanvas.getBoundingClientRect();
+			const targetW = Math.round(cRect.width * dpr);
+			const targetH = Math.round(cRect.height * dpr);
+
+			if (overlayCanvas.width !== targetW || overlayCanvas.height !== targetH) {
+				overlayCanvas.width = targetW;
+				overlayCanvas.height = targetH;
+			}
+
+			const ctx = overlayCanvas.getContext('2d');
+			if (ctx) {
+				ctx.save();
+				ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+				ctx.clearRect(0, 0, cRect.width, cRect.height);
+
+				const now = performance.now();
+				if (activeMatch && now - lastSeenCodeTime < 450) {
+					const vRect = videoElement.getBoundingClientRect();
+					const transform = getVideoTransform(
+						videoElement.videoWidth,
+						videoElement.videoHeight,
+						vRect.width,
+						vRect.height,
+						vRect.left - cRect.left,
+						vRect.top - cRect.top
+					);
+					drawBoundingBox(ctx, activeMatch.position, transform, '#10b981');
+				}
+				ctx.restore();
+			}
+		}
+
+		if (isModalOpen && step === 'SCAN_CODE') {
+			renderAnimId = requestAnimationFrame(startRenderLoop);
+		}
+	}
+
+	function confirmScannedCode() {
+		if (!activeDetectedCode) return;
+		if (navigator.vibrate) navigator.vibrate([100]);
+		scannedCode = activeDetectedCode;
+		step = 'CAPTURE_COVER';
+		if (scanAnimationId) {
+			cancelAnimationFrame(scanAnimationId);
+			scanAnimationId = null;
+		}
+		if (renderAnimId) {
+			cancelAnimationFrame(renderAnimId);
+			renderAnimId = null;
+		}
+		if (overlayCanvas) {
+			const ctx = overlayCanvas.getContext('2d');
+			if (ctx) ctx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
+		}
 	}
 
 	async function takeBookPhoto() {
@@ -154,8 +247,15 @@
 	function rescanCode() {
 		step = 'SCAN_CODE';
 		scannedCode = '';
-		if (!mediaStream) startCamera();
-		else startScanningLoop();
+		activeDetectedCode = null;
+		activeMatch = null;
+		lastSeenCodeTime = 0;
+		if (!mediaStream) {
+			startCamera();
+		} else {
+			startScanningLoop();
+			startRenderLoop();
+		}
 	}
 
 	async function submitBook(e: SubmitEvent) {
@@ -213,7 +313,7 @@
 	}
 </script>
 
-<div class="flex-1 max-w-4xl w-full mx-auto p-4 flex flex-col pb-28 bg-white text-black">
+<div class="flex-1 max-w-4xl w-full mx-auto p-4 flex flex-col pb-28 bg-white text-black overflow-y-auto">
 	<!-- Page Header -->
 	<div class="flex items-center justify-between mb-4 border-b-2 border-black pb-3">
 		<div>
@@ -373,7 +473,7 @@
 		</div>
 
 		<!-- Main Camera / Preview Area -->
-		<div class="relative flex-1 bg-black flex items-center justify-center overflow-hidden">
+		<div class="relative flex-1 bg-black flex items-center justify-center overflow-hidden touch-none select-none">
 			<video
 				bind:this={videoElement}
 				playsinline
@@ -386,16 +486,39 @@
 
 			<!-- STEP 1 OVERLAY -->
 			{#if step === 'SCAN_CODE'}
-				<div class="absolute inset-0 pointer-events-none flex flex-col items-center justify-center">
-					<div class="w-56 h-56 border-4 border-white relative flex items-center justify-center">
-						<span class="text-xs font-black uppercase tracking-wider text-black bg-white px-2.5 py-1 border-2 border-black">
-							Hledám kód...
-						</span>
+				<canvas
+					bind:this={overlayCanvas}
+					class="absolute inset-0 pointer-events-none w-full h-full z-10"
+				></canvas>
+
+				{#if !activeDetectedCode}
+					<div class="absolute inset-0 pointer-events-none flex flex-col items-center justify-center z-10">
+						<div class="w-56 h-56 border-4 border-white relative flex items-center justify-center">
+							<span class="text-xs font-black uppercase tracking-wider text-black bg-white px-2.5 py-1 border-2 border-black">
+								Hledám kód...
+							</span>
+						</div>
+						<p class="text-xs font-black uppercase tracking-wider text-black bg-white px-3 py-1.5 border-2 border-black mt-6">
+							Namiřte kameru na samolepku
+						</p>
 					</div>
-					<p class="text-xs font-black uppercase tracking-wider text-black bg-white px-3 py-1.5 border-2 border-black mt-6">
-						Namiřte kameru na samolepku
-					</p>
-				</div>
+				{/if}
+
+				{#if activeDetectedCode}
+					<div class="absolute bottom-6 inset-x-0 flex flex-col items-center gap-2 z-20 px-4">
+						<div class="bg-white border-2 border-black px-4 py-2 text-xs font-black uppercase text-black">
+							NASNÍMÁN KÓD: <span class="text-emerald-700">{activeDetectedCode}</span>
+						</div>
+						<button
+							type="button"
+							onclick={confirmScannedCode}
+							class="w-full max-w-sm py-4 bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white font-black text-sm uppercase tracking-wider border-2 border-black shadow-none flex items-center justify-center gap-2 cursor-pointer transition-colors"
+						>
+							<Check class="w-5 h-5" />
+							<span>DALŠÍ (POKRAČOVAT NA FOTO)</span>
+						</button>
+					</div>
+				{/if}
 			{/if}
 
 			<!-- STEP 2 OVERLAY -->
