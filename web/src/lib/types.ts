@@ -13,10 +13,7 @@ export interface Event {
 	id: string;
 	name: string;
 	active: boolean;
-	sellStart: string;
-	sellEnd: string;
-	buyStart: string;
-	buyEnd: string;
+	defaultPage?: 'sell' | 'seeprice';
 	bankAccount?: string;
 	iban?: string;
 	currency: string;
@@ -26,7 +23,6 @@ export type BookStatus = 'available' | 'checkout' | 'bought';
 
 export interface Book {
 	id: string;
-	code: string;
 	seller: string;
 	buyer?: string;
 	event: string;
@@ -41,6 +37,12 @@ export interface Book {
 		buyer?: User;
 		event?: Event;
 	};
+}
+
+export interface BookPriceResponse {
+	id: string;
+	price: number;
+	status: BookStatus;
 }
 
 export type PaymentMethod = 'qr' | 'cash';

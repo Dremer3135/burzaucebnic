@@ -175,7 +175,7 @@
 
 		try {
 			const formData = new FormData();
-			formData.append('code', scannedCode.trim());
+			formData.append('id', scannedCode.trim());
 			formData.append('seller', auth.user.id);
 			formData.append('event', eventStore.event.id);
 			formData.append('price', String(priceInput));
@@ -188,7 +188,12 @@
 			closeSellModal();
 		} catch (err: any) {
 			console.error('Book submission error', err);
-			errorMessage = err?.message || 'Chyba při ukládání učebnice. Zkontrolujte, zda kód již neexistuje.';
+			const msg = String(err?.message || '').toLowerCase();
+			if (err?.status === 400 || msg.includes('unique') || msg.includes('id') || msg.includes('exist')) {
+				errorMessage = `Kód '${scannedCode.trim()}' je již v databázi zaregistrován. Použijte prosím jinou samolepku.`;
+			} else {
+				errorMessage = err?.message || 'Chyba při ukládání učebnice. Zkontrolujte, zda kód již neexistuje.';
+			}
 		} finally {
 			isSubmitting = false;
 		}
@@ -265,7 +270,7 @@
 						{#if book.photo}
 							<img
 								src={getBookThumbnailUrl(book)}
-								alt={book.code}
+								alt={book.id}
 								class="w-full h-full object-cover"
 							/>
 						{:else}
@@ -282,8 +287,8 @@
 					<div class="flex-1 flex flex-col justify-between py-0.5">
 						<div>
 							<div class="flex items-center justify-between gap-1 mb-1.5">
-								<span class="text-xs font-black text-black truncate uppercase" title={book.code}>
-									{book.code}
+								<span class="text-xs font-black text-black truncate uppercase" title={book.id}>
+									{book.id}
 								</span>
 							</div>
 
@@ -325,11 +330,11 @@
 		<div class="max-w-md w-full max-h-[85vh] flex flex-col items-center">
 			<img
 				src={getBookFullImageUrl(selectedPreviewBook)}
-				alt={selectedPreviewBook.code}
+				alt={selectedPreviewBook.id}
 				class="max-w-full max-h-[70vh] object-contain border-4 border-black bg-white mb-4"
 			/>
 			<div class="text-center bg-white border-2 border-black p-3 w-full">
-				<p class="text-base font-black uppercase text-black">{selectedPreviewBook.code}</p>
+				<p class="text-base font-black uppercase text-black">{selectedPreviewBook.id}</p>
 				<p class="text-2xl font-black text-black">{selectedPreviewBook.price} Kč</p>
 			</div>
 		</div>

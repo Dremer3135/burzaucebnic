@@ -104,6 +104,63 @@ export async function scanFrameForDataMatrix(
 	return null;
 }
 
+export async function scanFrameForAllDataMatrices(
+	canvas: HTMLCanvasElement,
+	video: HTMLVideoElement,
+	maxSymbols = 8
+): Promise<ScanMatch[]> {
+	if (!video.videoWidth || !video.videoHeight) return [];
+
+	const width = video.videoWidth;
+	const height = video.videoHeight;
+
+	if (canvas.width !== width || canvas.height !== height) {
+		canvas.width = width;
+		canvas.height = height;
+	}
+
+	const ctx = canvas.getContext('2d', { willReadFrequently: true });
+	if (!ctx) return [];
+
+	ctx.drawImage(video, 0, 0, width, height);
+	const imageData = ctx.getImageData(0, 0, width, height);
+
+	try {
+		const results = await readBarcodes(imageData, {
+			formats: ['DataMatrix'],
+			tryHarder: true,
+			maxNumberOfSymbols: maxSymbols
+		});
+
+		if (results && results.length > 0) {
+			return results.map((res) => {
+				const pos = res.position;
+				const xs = [pos.topLeft.x, pos.topRight.x, pos.bottomRight.x, pos.bottomLeft.x];
+				const ys = [pos.topLeft.y, pos.topRight.y, pos.bottomRight.y, pos.bottomLeft.y];
+				const minX = Math.min(...xs);
+				const maxX = Math.max(...xs);
+				const minY = Math.min(...ys);
+				const maxY = Math.max(...ys);
+
+				return {
+					text: res.text,
+					position: pos,
+					box: {
+						x: minX,
+						y: minY,
+						width: maxX - minX,
+						height: maxY - minY
+					}
+				};
+			});
+		}
+	} catch (err) {
+		// No code in frame or wasm error
+	}
+
+	return [];
+}
+
 export function drawBoundingBox(
 	ctx: CanvasRenderingContext2D,
 	pos: Position,
@@ -157,6 +214,73 @@ export function drawBoundingBox(
 	ctx.restore();
 }
 
+export function drawPricePolygon(
+	ctx: CanvasRenderingContext2D,
+	pos: Position,
+	priceText: string,
+	transform: VideoTransform
+) {
+	const { scale, offsetX, offsetY } = transform;
+
+	const p1 = { x: pos.topLeft.x * scale + offsetX, y: pos.topLeft.y * scale + offsetY };
+	const p2 = { x: pos.topRight.x * scale + offsetX, y: pos.topRight.y * scale + offsetY };
+	const p3 = { x: pos.bottomRight.x * scale + offsetX, y: pos.bottomRight.y * scale + offsetY };
+	const p4 = { x: pos.bottomLeft.x * scale + offsetX, y: pos.bottomLeft.y * scale + offsetY };
+
+	ctx.save();
+
+	// 1. Draw solid opaque white polygon
+	ctx.beginPath();
+	ctx.moveTo(p1.x, p1.y);
+	ctx.lineTo(p2.x, p2.y);
+	ctx.lineTo(p3.x, p3.y);
+	ctx.lineTo(p4.x, p4.y);
+	ctx.closePath();
+
+	ctx.fillStyle = '#ffffff';
+	ctx.fill();
+
+	// 2. Sharp 2px black border
+	ctx.lineWidth = 2;
+	ctx.strokeStyle = '#000000';
+	ctx.lineJoin = 'miter';
+	ctx.stroke();
+
+	// 3. Center point of polygon
+	const centerX = (p1.x + p2.x + p3.x + p4.x) / 4;
+	const centerY = (p1.y + p2.y + p3.y + p4.y) / 4;
+
+	// Dimensions of the quadrilateral
+	const widthTop = Math.hypot(p2.x - p1.x, p2.y - p1.y);
+	const widthBottom = Math.hypot(p3.x - p4.x, p3.y - p4.y);
+	const avgWidth = (widthTop + widthBottom) / 2;
+
+	const heightLeft = Math.hypot(p4.x - p1.x, p4.y - p1.y);
+	const heightRight = Math.hypot(p3.x - p2.x, p3.y - p2.y);
+	const avgHeight = (heightLeft + heightRight) / 2;
+
+	const minDim = Math.min(avgWidth, avgHeight);
+
+	// Angle from top edge (p1 -> p2)
+	let angle = Math.atan2(p2.y - p1.y, p2.x - p1.x);
+	// Keep text upright (within -90 to +90 degrees)
+	if (angle > Math.PI / 2) angle -= Math.PI;
+	if (angle < -Math.PI / 2) angle += Math.PI;
+
+	// Text size scaled to fit polygon (approx 28% of min dimension)
+	const fontSize = Math.max(12, Math.min(54, Math.floor(minDim * 0.28)));
+
+	ctx.translate(centerX, centerY);
+	ctx.rotate(angle);
+
+	ctx.fillStyle = '#000000';
+	ctx.font = `900 ${fontSize}px ui-sans-serif, system-ui, -apple-system, sans-serif`;
+	ctx.textAlign = 'center';
+	ctx.textBaseline = 'middle';
+	ctx.fillText(priceText, 0, 0);
+
+	ctx.restore();
+}
 
 // Snaps a picture from the video element, optionally cropped to the aspect ratio rectangle
 export async function capturePhotoFromVideo(video: HTMLVideoElement): Promise<Blob> {

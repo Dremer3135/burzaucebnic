@@ -332,12 +332,12 @@
 								{#if book.photo}
 									<img
 										src={getBookThumbnailUrl(book)}
-										alt={book.code}
+										alt={book.id}
 										class="w-full h-full object-cover"
 									/>
 								{/if}
 							</div>
-							<span class="font-black uppercase text-black truncate">{book.code}</span>
+							<span class="font-black uppercase text-black truncate">{book.id}</span>
 						</div>
 						<div class="font-black text-black text-base shrink-0 ml-2">
 							{book.price} Kč

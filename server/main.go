@@ -30,18 +30,6 @@ var vsLock sync.Mutex
 func main() {
 	app := pocketbase.New()
 
-	// 1. Hook: Duplicate Data Matrix code validation before creating a book
-	app.OnRecordCreate("books").BindFunc(func(e *core.RecordEvent) error {
-		code := strings.TrimSpace(e.Record.GetString("code"))
-		if code == "" {
-			return router.NewBadRequestError("Kód Data Matrix je povinný.", nil)
-		}
-		existing, _ := e.App.FindFirstRecordByData("books", "code", code)
-		if existing != nil {
-			return router.NewBadRequestError(fmt.Sprintf("Kód '%s' je již zaregistrován.", code), nil)
-		}
-		return e.Next()
-	})
 
 	// 2. Hook: FFmpeg compression of book photo after upload
 	app.OnRecordAfterCreateSuccess("books").BindFunc(func(e *core.RecordEvent) error {
@@ -118,10 +106,11 @@ func ensureSchema(app core.App) error {
 		eventsColl.Fields.Add(
 			&core.TextField{Name: "name", Required: true},
 			&core.BoolField{Name: "active"},
-			&core.DateField{Name: "sellStart"},
-			&core.DateField{Name: "sellEnd"},
-			&core.DateField{Name: "buyStart"},
-			&core.DateField{Name: "buyEnd"},
+			&core.SelectField{
+				Name:      "defaultPage",
+				Values:    []string{"sell", "seeprice"},
+				MaxSelect: 1,
+			},
 			&core.TextField{Name: "bankAccount"},
 			&core.TextField{Name: "iban"},
 			&core.TextField{Name: "currency"},
@@ -129,19 +118,39 @@ func ensureSchema(app core.App) error {
 		if err := app.Save(eventsColl); err != nil {
 			return fmt.Errorf("creating events collection: %w", err)
 		}
+	} else {
+		var changed bool
+		for _, f := range []string{"sellStart", "sellEnd", "buyStart", "buyEnd"} {
+			if eventsColl.Fields.GetByName(f) != nil {
+				eventsColl.Fields.RemoveByName(f)
+				changed = true
+			}
+		}
+		if eventsColl.Fields.GetByName("defaultPage") == nil {
+			eventsColl.Fields.Add(&core.SelectField{
+				Name:      "defaultPage",
+				Values:    []string{"sell", "seeprice"},
+				MaxSelect: 1,
+			})
+			changed = true
+		}
+		if changed {
+			if err := app.Save(eventsColl); err != nil {
+				return fmt.Errorf("updating events collection: %w", err)
+			}
+		}
 	}
 
 	// 2. Books collection
 	booksColl, _ := app.FindCollectionByNameOrId("books")
 	if booksColl == nil {
 		booksColl = core.NewBaseCollection("books")
-		booksColl.ListRule = types.Pointer("@request.auth.id != ''")
-		booksColl.ViewRule = types.Pointer("@request.auth.id != ''")
+		booksColl.ListRule = types.Pointer("@request.auth.id = seller.id || @request.auth.isCashier = true")
+		booksColl.ViewRule = types.Pointer("@request.auth.id = seller.id || @request.auth.isCashier = true")
 		booksColl.CreateRule = types.Pointer("@request.auth.id != '' && @request.auth.id = @request.body.seller")
 		booksColl.UpdateRule = types.Pointer("@request.auth.id != '' && (@request.auth.id = seller || @request.auth.isCashier = true)")
 		booksColl.DeleteRule = types.Pointer("@request.auth.id != '' && @request.auth.id = seller && status = 'available'")
 		booksColl.Fields.Add(
-			&core.TextField{Name: "code", Required: true},
 			&core.RelationField{
 				Name: "seller", Required: true,
 				CollectionId: usersColl.Id, MaxSelect: 1,
@@ -169,11 +178,38 @@ func ensureSchema(app core.App) error {
 			},
 			&core.DateField{Name: "checkoutExpiresAt"},
 		)
-		booksColl.Indexes = types.JSONArray[string]{
-			"CREATE UNIQUE INDEX idx_books_code ON books (code)",
-		}
 		if err := app.Save(booksColl); err != nil {
 			return fmt.Errorf("creating books collection: %w", err)
+		}
+	} else {
+		var changed bool
+		if booksColl.Fields.GetByName("code") != nil {
+			booksColl.Fields.RemoveByName("code")
+			changed = true
+		}
+		newIndexes := make([]string, 0, len(booksColl.Indexes))
+		for _, idx := range booksColl.Indexes {
+			if !strings.Contains(idx, "idx_books_code") {
+				newIndexes = append(newIndexes, idx)
+			} else {
+				changed = true
+			}
+		}
+		booksColl.Indexes = newIndexes
+
+		newRule := "@request.auth.id = seller.id || @request.auth.isCashier = true"
+		if booksColl.ListRule == nil || *booksColl.ListRule != newRule {
+			booksColl.ListRule = types.Pointer(newRule)
+			changed = true
+		}
+		if booksColl.ViewRule == nil || *booksColl.ViewRule != newRule {
+			booksColl.ViewRule = types.Pointer(newRule)
+			changed = true
+		}
+		if changed {
+			if err := app.Save(booksColl); err != nil {
+				return fmt.Errorf("updating books collection: %w", err)
+			}
 		}
 	}
 
@@ -314,10 +350,7 @@ func seedInitialData(app core.App) error {
 		event = core.NewRecord(eventsColl)
 		event.Set("name", "Podzimní burza učebnic 2026")
 		event.Set("active", true)
-		event.Set("sellStart", time.Now().Add(-24*time.Hour).UTC().Format("2006-01-02 15:04:05.000Z"))
-		event.Set("sellEnd", time.Now().Add(30*24*time.Hour).UTC().Format("2006-01-02 15:04:05.000Z"))
-		event.Set("buyStart", time.Now().Add(-24*time.Hour).UTC().Format("2006-01-02 15:04:05.000Z"))
-		event.Set("buyEnd", time.Now().Add(30*24*time.Hour).UTC().Format("2006-01-02 15:04:05.000Z"))
+		event.Set("defaultPage", "sell")
 		event.Set("bankAccount", "2101234567/2010")
 		event.Set("iban", "CZ6520100000002101234567")
 		event.Set("currency", "CZK")
@@ -326,6 +359,9 @@ func seedInitialData(app core.App) error {
 		} else {
 			log.Printf("[SEED] Created active event: %s", event.GetString("name"))
 		}
+	} else if event.GetString("defaultPage") == "" {
+		event.Set("defaultPage", "sell")
+		_ = app.Save(event)
 	}
 
 	// 2. Test Users
@@ -383,15 +419,15 @@ func seedInitialData(app core.App) error {
 			_ = app.DB().Select("count(*)").From("books").Row(&count)
 			if count == 0 {
 				sampleBooks := []struct {
-					code  string
+					id    string
 					title string
 					price float64
 					bgCol color.RGBA
 				}{
-					{code: "MAT-GYMN-01", title: "Matematika pro gymnázia", price: 150, bgCol: color.RGBA{R: 41, G: 128, B: 185, A: 255}},
-					{code: "FYZ-SBIRKA-02", title: "Sbírka úloh z fyziky", price: 120, bgCol: color.RGBA{R: 39, G: 174, B: 96, A: 255}},
-					{code: "DEJ-PREHLED-03", title: "Dějiny novověku", price: 200, bgCol: color.RGBA{R: 192, G: 57, B: 43, A: 255}},
-					{code: "CJ-LITERATURA-04", title: "Literatura pro SŠ", price: 180, bgCol: color.RGBA{R: 142, G: 68, B: 173, A: 255}},
+					{id: "matgymn00000001", title: "Matematika pro gymnázia", price: 150, bgCol: color.RGBA{R: 41, G: 128, B: 185, A: 255}},
+					{id: "fyzsbirka000002", title: "Sbírka úloh z fyziky", price: 120, bgCol: color.RGBA{R: 39, G: 174, B: 96, A: 255}},
+					{id: "dejprehled00003", title: "Dějiny novověku", price: 200, bgCol: color.RGBA{R: 192, G: 57, B: 43, A: 255}},
+					{id: "cjliterat000004", title: "Literatura pro SŠ", price: 180, bgCol: color.RGBA{R: 142, G: 68, B: 173, A: 255}},
 				}
 
 				for _, sb := range sampleBooks {
@@ -400,7 +436,7 @@ func seedInitialData(app core.App) error {
 						continue
 					}
 					book := core.NewRecord(booksColl)
-					book.Set("code", sb.code)
+					book.Id = sb.id
 					book.Set("seller", sellerUser.Id)
 					book.Set("event", event.Id)
 					book.Set("price", sb.price)
@@ -410,9 +446,9 @@ func seedInitialData(app core.App) error {
 						book.Set("photo", file)
 					}
 					if err := app.Save(book); err != nil {
-						log.Printf("[SEED] Error creating sample book %s: %v", sb.code, err)
+						log.Printf("[SEED] Error creating sample book %s: %v", sb.id, err)
 					} else {
-						log.Printf("[SEED] Created sample book %s (%s, %.0f Kč)", sb.code, sb.title, sb.price)
+						log.Printf("[SEED] Created sample book %s (%s, %.0f Kč)", sb.id, sb.title, sb.price)
 					}
 				}
 			}
@@ -424,6 +460,30 @@ func seedInitialData(app core.App) error {
 
 // registerApiEndpoints registers custom API routes
 func registerApiEndpoints(e *core.ServeEvent) {
+	// GET /api/book-price?id={id} - Query book price and status by Data Matrix ID
+	e.Router.GET("/api/book-price", func(c *core.RequestEvent) error {
+		authRecord := c.Auth
+		if authRecord == nil {
+			return c.UnauthorizedError("Přihlášení je vyžadováno.", nil)
+		}
+
+		id := strings.TrimSpace(c.Request.URL.Query().Get("id"))
+		if id == "" {
+			return c.BadRequestError("Chybí ID knihy.", nil)
+		}
+
+		book, err := c.App.FindRecordById("books", id)
+		if err != nil || book == nil {
+			return c.NotFoundError("Kniha nebyla nalezena.", nil)
+		}
+
+		return c.JSON(http.StatusOK, map[string]any{
+			"id":     book.Id,
+			"price":  book.GetFloat("price"),
+			"status": book.GetString("status"),
+		})
+	}).Bind(apis.RequireAuth("users"))
+
 	// POST /api/checkout - Atomic book checkout reservation
 	e.Router.POST("/api/checkout", func(c *core.RequestEvent) error {
 		authRecord := c.Auth
@@ -451,11 +511,11 @@ func registerApiEndpoints(e *core.ServeEvent) {
 				}
 
 				if book.GetString("status") != "available" {
-					return router.NewApiError(http.StatusConflict, fmt.Sprintf("Kniha '%s' již není dostupná (stav: %s).", book.GetString("code"), book.GetString("status")), nil)
+					return router.NewApiError(http.StatusConflict, fmt.Sprintf("Kniha '%s' již není dostupná (stav: %s).", book.Id, book.GetString("status")), nil)
 				}
 
 				if book.GetString("seller") == authRecord.Id {
-					return c.BadRequestError(fmt.Sprintf("Nemůžete zakoupit svoji vlastní knihu (%s).", book.GetString("code")), nil)
+					return c.BadRequestError(fmt.Sprintf("Nemůžete zakoupit svoji vlastní knihu (%s).", book.Id), nil)
 				}
 
 				book.Set("status", "checkout")
@@ -601,7 +661,6 @@ func registerApiEndpoints(e *core.ServeEvent) {
 
 		type bookItem struct {
 			Id             string  `json:"id"`
-			Code           string  `json:"code"`
 			Price          float64 `json:"price"`
 			Photo          string  `json:"photo"`
 			CollectionId   string  `json:"collectionId"`
@@ -615,7 +674,6 @@ func registerApiEndpoints(e *core.ServeEvent) {
 			totalAmount += p
 			items = append(items, bookItem{
 				Id:             b.Id,
-				Code:           b.GetString("code"),
 				Price:          p,
 				Photo:          b.GetString("photo"),
 				CollectionId:   b.Collection().Id,

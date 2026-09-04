@@ -232,7 +232,7 @@
 							{#if payment.expand?.books}
 								{#each payment.expand.books as b}
 									<span class="bg-neutral-100 px-2 py-1 text-black font-mono font-black text-xs border border-black uppercase">
-										{b.code} ({b.price} Kč)
+										{b.id} ({b.price} Kč)
 									</span>
 								{/each}
 							{:else}

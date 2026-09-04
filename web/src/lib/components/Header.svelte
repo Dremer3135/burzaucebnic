@@ -19,20 +19,21 @@
 		{#if auth.user}
 			<div class="flex items-center gap-1 border-2 border-black p-0.5 bg-white">
 				<a
-					href="/buy"
-					class="px-3 py-1.5 font-black text-xs uppercase tracking-wider transition-colors {currentPath === '/buy'
-						? 'bg-black text-white'
-						: 'bg-white text-black hover:bg-neutral-200'}"
-				>
-					KOUPIT
-				</a>
-				<a
 					href="/sell"
 					class="px-3 py-1.5 font-black text-xs uppercase tracking-wider transition-colors {currentPath === '/sell'
 						? 'bg-black text-white'
 						: 'bg-white text-black hover:bg-neutral-200'}"
 				>
 					PRODAT
+				</a>
+				<a
+					href="/seeprice"
+					class="px-3 py-1.5 font-black text-xs uppercase tracking-wider transition-colors {currentPath === '/seeprice'
+						? 'bg-black text-white'
+						: 'bg-white text-black hover:bg-neutral-200'}"
+				>
+					<span class="sm:hidden">CENA</span>
+					<span class="hidden sm:inline">ZJISTIT CENU</span>
 				</a>
 			</div>
 		{/if}

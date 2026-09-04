@@ -121,25 +121,17 @@ class EventStore {
 		}
 	}
 
-	// Status helpers relative to current time
-	isSellActive(): boolean {
-		if (!this.event || !this.event.active) return false;
-		const now = new Date().getTime();
-		const start = this.event.sellStart ? new Date(this.event.sellStart).getTime() : 0;
-		const end = this.event.sellEnd ? new Date(this.event.sellEnd).getTime() : Infinity;
-		return now >= start && now <= end;
-	}
-
-	isBuyActive(): boolean {
-		if (!this.event || !this.event.active) return false;
-		const now = new Date().getTime();
-		const start = this.event.buyStart ? new Date(this.event.buyStart).getTime() : 0;
-		const end = this.event.buyEnd ? new Date(this.event.buyEnd).getTime() : Infinity;
-		return now >= start && now <= end;
+	isMarketActive(): boolean {
+		return !!this.event?.active;
 	}
 
 	isMarketClosed(): boolean {
-		return !this.isSellActive() && !this.isBuyActive();
+		return !this.event?.active;
+	}
+
+	getDefaultRoute(): string {
+		if (!this.event || !this.event.active) return '/';
+		return this.event.defaultPage === 'seeprice' ? '/seeprice' : '/sell';
 	}
 }
 
@@ -296,3 +288,63 @@ class CashierPaymentsStore {
 }
 
 export const cashierPayments = new CashierPaymentsStore();
+
+// ==========================================
+// 5. PRICE STORE (In-memory cache for /seeprice)
+// ==========================================
+export interface CachedPrice {
+	id: string;
+	price: number;
+	status: string;
+}
+
+class PriceStore {
+	private cache = new Map<string, CachedPrice | null>();
+	private inFlight = new Map<string, Promise<CachedPrice | null>>();
+
+	get(id: string): CachedPrice | null | undefined {
+		return this.cache.get(id);
+	}
+
+	has(id: string): boolean {
+		return this.cache.has(id);
+	}
+
+	async fetchPrice(id: string): Promise<CachedPrice | null> {
+		if (this.cache.has(id)) {
+			return this.cache.get(id)!;
+		}
+
+		if (this.inFlight.has(id)) {
+			return this.inFlight.get(id)!;
+		}
+
+		const promise = (async () => {
+			try {
+				const res = await pb.send<{ id: string; price: number; status: string }>(
+					`/api/book-price?id=${encodeURIComponent(id)}`,
+					{ method: 'GET' }
+				);
+				const data: CachedPrice = { id: res.id, price: res.price, status: res.status };
+				this.cache.set(id, data);
+				return data;
+			} catch (err: any) {
+				// Record not found (404) or error
+				this.cache.set(id, null);
+				return null;
+			} finally {
+				this.inFlight.delete(id);
+			}
+		})();
+
+		this.inFlight.set(id, promise);
+		return promise;
+	}
+
+	clear() {
+		this.cache.clear();
+		this.inFlight.clear();
+	}
+}
+
+export const priceStore = new PriceStore();
