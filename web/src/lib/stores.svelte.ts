@@ -376,12 +376,19 @@ export interface CachedPrice {
 	status: string;
 }
 
+interface CacheEntry {
+	data: CachedPrice | null;
+	cachedAt: number;
+}
+
 class PriceStore {
-	private cache = new Map<string, CachedPrice | null>();
+	private cache = new Map<string, CacheEntry>();
 	private inFlight = new Map<string, Promise<CachedPrice | null>>();
 	private unsub: (() => void) | null = null;
+	private ttlMs: number;
 
-	constructor() {
+	constructor(ttlMs = 10_000) {
+		this.ttlMs = ttlMs;
 		if (typeof window !== 'undefined') {
 			this.subscribe();
 		}
@@ -392,12 +399,18 @@ class PriceStore {
 			this.unsub = await pb.collection('books').subscribe<Book>('*', (e) => {
 				if (e.action === 'create' || e.action === 'update') {
 					this.cache.set(e.record.id, {
-						id: e.record.id,
-						price: e.record.price,
-						status: e.record.status
+						data: {
+							id: e.record.id,
+							price: e.record.price,
+							status: e.record.status
+						},
+						cachedAt: Date.now()
 					});
 				} else if (e.action === 'delete') {
-					this.cache.set(e.record.id, null);
+					this.cache.set(e.record.id, {
+						data: null,
+						cachedAt: Date.now()
+					});
 				}
 			});
 		} catch (err) {
@@ -406,25 +419,41 @@ class PriceStore {
 	}
 
 	get(id: string): CachedPrice | null | undefined {
-		return this.cache.get(id);
+		const entry = this.cache.get(id);
+		return entry !== undefined ? entry.data : undefined;
+	}
+
+	isFresh(id: string): boolean {
+		const entry = this.cache.get(id);
+		if (!entry) return false;
+		return Date.now() - entry.cachedAt < this.ttlMs;
 	}
 
 	has(id: string): boolean {
+		return this.isFresh(id);
+	}
+
+	hasEntry(id: string): boolean {
 		return this.cache.has(id);
 	}
 
 	set(id: string, data: CachedPrice | null) {
-		this.cache.set(id, data);
+		this.cache.set(id, {
+			data,
+			cachedAt: Date.now()
+		});
 	}
 
 	isUsed(id: string): boolean | null {
-		if (!this.cache.has(id)) return null;
-		return this.cache.get(id) !== null;
+		const entry = this.cache.get(id);
+		if (!entry) return null;
+		return entry.data !== null;
 	}
 
-	async fetchPrice(id: string): Promise<CachedPrice | null> {
-		if (this.cache.has(id)) {
-			return this.cache.get(id)!;
+	async fetchPrice(id: string, force = false): Promise<CachedPrice | null> {
+		const entry = this.cache.get(id);
+		if (!force && entry && Date.now() - entry.cachedAt < this.ttlMs) {
+			return entry.data;
 		}
 
 		if (this.inFlight.has(id)) {
@@ -438,15 +467,18 @@ class PriceStore {
 					{ method: 'GET' }
 				);
 				const data: CachedPrice = { id: res.id, price: res.price, status: res.status };
-				this.cache.set(id, data);
+				this.cache.set(id, { data, cachedAt: Date.now() });
 				return data;
 			} catch (err: any) {
 				// Record not found (404) means code is free
 				if (err?.status === 404) {
-					this.cache.set(id, null);
+					this.cache.set(id, { data: null, cachedAt: Date.now() });
 					return null;
 				}
-				// On other network/auth errors, do not cache as non-existent
+				// On other network/auth errors, retain previous cached data if present
+				if (entry) {
+					return entry.data;
+				}
 				return null;
 			} finally {
 				this.inFlight.delete(id);
@@ -463,4 +495,4 @@ class PriceStore {
 	}
 }
 
-export const priceStore = new PriceStore();
+export const priceStore = new PriceStore(10_000);
