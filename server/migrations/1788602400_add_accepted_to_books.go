@@ -31,5 +31,5 @@ func init() {
 		}
 
 		return nil
-	})
+	}, "1788602400_add_accepted_to_books.go")
 }

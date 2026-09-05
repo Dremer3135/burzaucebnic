@@ -271,6 +271,10 @@ func ensureSchema(app core.App) error {
 			booksColl.Fields.Add(&core.BoolField{Name: "accepted"})
 			changed = true
 		}
+		if booksColl.Fields.GetByName("checkoutExpiresAt") == nil {
+			booksColl.Fields.Add(&core.DateField{Name: "checkoutExpiresAt"})
+			changed = true
+		}
 		if booksColl.Fields.GetByName("created") == nil {
 			booksColl.Fields.Add(&core.AutodateField{Name: "created", OnCreate: true})
 			changed = true
