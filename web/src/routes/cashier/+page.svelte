@@ -132,6 +132,7 @@
 	let qrCanvas = $state<HTMLCanvasElement | null>(null);
 	let isConfirmingPayment = $state(false);
 	let paymentError = $state('');
+	let confirmAction = $state<'CASH' | 'QR' | null>(null);
 
 	// Pure standard mode gating:
 	// Scanner strictly scans and auto-adds ONLY in pure standard camera view
@@ -731,6 +732,7 @@
 		activePayment = null;
 		paymentMode = null;
 		paymentError = '';
+		confirmAction = null;
 		sheetExpanded = false;
 		removingItemIds.clear();
 		swipingItemId = null;
@@ -1229,76 +1231,132 @@
 	<!-- PAYMENT FINALIZATION VIEW (SPAYD QR & CASH CONFIRMATION)          -->
 	<!-- ---------------------------------------------------------------- -->
 	{#if paymentMode === 'PAYMENT' && activePayment}
-		<div class="absolute inset-0 bg-white z-40 p-4 sm:p-6 overflow-y-auto flex flex-col items-center justify-center text-black">
-			<div class="w-full max-w-md bg-white border-4 border-black p-6 shadow-[8px_8px_0px_0px_rgba(0,0,0,1)] text-center">
-				<h2 class="text-2xl font-black uppercase tracking-tight mb-1">PLATBA NÁKUPU</h2>
-				<p class="text-xs font-bold text-neutral-600 uppercase mb-4">
-					Zákazník může zaplatit QR kódem v bance nebo hotově
-				</p>
-
-				<!-- Big Czech SPAYD QR Canvas -->
-				<div class="bg-white p-4 border-4 border-black inline-block mx-auto mb-4">
-					<canvas bind:this={qrCanvas} class="max-w-full h-auto"></canvas>
+		<div class="absolute inset-0 bg-white z-40 p-4 flex flex-col justify-between max-w-sm mx-auto text-black select-none overflow-y-auto">
+			<!-- Compact Header: Amount & Variable Symbol -->
+			<div class="border-b-2 border-black pb-2.5 pt-1">
+				<div class="flex items-baseline justify-between">
+					<div>
+						<span class="text-[10px] font-mono font-bold text-neutral-500 uppercase block">Částka</span>
+						<span class="text-3xl font-black text-black leading-none">{activePayment.totalAmount} Kč</span>
+					</div>
+					<div class="text-right">
+						<span class="text-[10px] font-mono font-bold text-neutral-500 uppercase block">Var. symbol</span>
+						<span class="font-mono text-xl font-black text-black leading-none">{activePayment.variableSymbol}</span>
+					</div>
 				</div>
+				{#if currentBuyer}
+					<div class="text-[11px] font-bold text-neutral-600 truncate mt-1.5 flex items-center gap-1.5">
+						<span class="text-neutral-400 font-normal">Kupující:</span>
+						<span class="text-black font-mono font-bold truncate">{currentBuyer.name ? `${currentBuyer.name} (${currentBuyer.email})` : currentBuyer.email}</span>
+					</div>
+				{/if}
+			</div>
 
-				<!-- Total Price & VS Details -->
-				<div class="bg-neutral-50 border-2 border-black p-3.5 text-xs text-left mb-6 space-y-1.5 font-mono">
-					<div class="flex justify-between border-b border-neutral-300 pb-1">
-						<span class="font-sans font-black text-neutral-600 uppercase text-[11px]">ČÁSTKA:</span>
-						<span class="font-sans font-black text-black text-xl">{activePayment.totalAmount} Kč</span>
-					</div>
-					<div class="flex justify-between border-b border-neutral-300 pb-1">
-						<span class="font-sans font-black text-neutral-600 uppercase text-[11px]">VARIABILNÍ SYMBOL:</span>
-						<span class="font-black text-black text-base">{activePayment.variableSymbol}</span>
-					</div>
-					<div class="flex justify-between border-b border-neutral-300 pb-1">
-						<span class="font-sans font-black text-neutral-600 uppercase text-[11px]">ÚČET (IBAN):</span>
-						<span class="font-bold text-black text-[11px]">{activeEvent?.iban || 'CZ6520100000002101234567'}</span>
-					</div>
-					{#if currentBuyer}
-						<div class="flex justify-between">
-							<span class="font-sans font-black text-neutral-600 uppercase text-[11px]">KUPUJÍCÍ:</span>
-							<span class="font-sans font-bold text-black text-[11px] truncate max-w-[200px]">{currentBuyer.email}</span>
-						</div>
-					{/if}
+			<!-- Centered SPAYD QR Canvas -->
+			<div class="flex-1 flex flex-col items-center justify-center py-3 min-h-0">
+				<div class="bg-white p-2 border-2 border-black shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]">
+					<canvas bind:this={qrCanvas} class="w-48 h-48 sm:w-56 sm:h-56 max-h-[42vh] max-w-[42vh] aspect-square block"></canvas>
 				</div>
+			</div>
 
+			<!-- Bottom Actions & Error -->
+			<div class="space-y-2 pt-1 pb-1">
 				{#if paymentError}
-					<div class="p-2.5 bg-red-50 border-2 border-red-600 text-red-700 text-xs font-bold mb-4 flex items-center gap-2">
+					<div class="p-2 bg-red-50 border-2 border-red-600 text-red-700 text-xs font-bold flex items-center gap-2 mb-1">
 						<AlertCircle class="w-4 h-4 shrink-0" />
-						<span>{paymentError}</span>
+						<span class="truncate">{paymentError}</span>
 					</div>
 				{/if}
 
-				<!-- Action buttons -->
-				<div class="space-y-2">
-					<!-- Prominent Cash Confirmation Button -->
-					<button
-						type="button"
-						onclick={handleConfirmCash}
-						disabled={isConfirmingPayment}
-						class="w-full py-4 px-6 bg-black hover:bg-neutral-800 text-white font-black text-sm uppercase tracking-wider border-4 border-black flex items-center justify-center gap-2 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] cursor-pointer active:scale-98 transition-transform"
-					>
-						{#if isConfirmingPayment}
-							<RefreshCw class="w-5 h-5 animate-spin" />
-						{:else}
-							<Banknote class="w-5 h-5" />
-						{/if}
-						<span>ZAPLACENO HOTOVĚ ({activePayment.totalAmount} Kč)</span>
-					</button>
+				<!-- Cash Confirmation Button -->
+				<button
+					type="button"
+					onclick={() => (confirmAction = 'CASH')}
+					disabled={isConfirmingPayment}
+					class="w-full py-3.5 px-4 bg-black hover:bg-neutral-800 text-white font-black text-sm uppercase tracking-wider border-2 border-black flex items-center justify-center gap-2 cursor-pointer active:scale-98 transition-transform"
+				>
+					{#if isConfirmingPayment}
+						<RefreshCw class="w-4 h-4 animate-spin" />
+					{:else}
+						<Banknote class="w-4 h-4" />
+					{/if}
+					<span>Zaplaceno hotově</span>
+				</button>
 
-					<!-- Leave pending for bank payment -->
-					<button
-						type="button"
-						onclick={resetForNextCustomer}
-						class="w-full py-2.5 px-4 bg-white hover:bg-neutral-100 text-black font-black text-xs uppercase tracking-wider border-2 border-black flex items-center justify-center gap-1.5 cursor-pointer"
-					>
-						<Receipt class="w-4 h-4" />
-						<span>PONECHAT JAKO ČEKAJÍCÍ QR PLATBU (DALŠÍ ZÁKAZNÍK)</span>
-					</button>
-				</div>
+				<!-- Leave pending for QR payment -->
+				<button
+					type="button"
+					onclick={() => (confirmAction = 'QR')}
+					class="w-full py-2.5 px-4 bg-white hover:bg-neutral-100 text-black font-black text-xs uppercase tracking-wider border-2 border-black flex items-center justify-center gap-1.5 cursor-pointer active:scale-98 transition-transform"
+				>
+					<Receipt class="w-4 h-4" />
+					<span>Zaplatí přes QR</span>
+				</button>
 			</div>
 		</div>
+
+		<!-- Confirmation Dialog for Payment Actions -->
+		{#if confirmAction}
+			<div class="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
+				<div class="w-full max-w-sm bg-white border-4 border-black p-5 shadow-[6px_6px_0px_0px_rgba(0,0,0,1)] text-center">
+					{#if confirmAction === 'CASH'}
+						<div class="inline-flex p-3 bg-neutral-100 border-2 border-black mb-3">
+							<Banknote class="w-8 h-8 text-black" />
+						</div>
+						<h3 class="text-base font-black uppercase mb-1">Potvrdit platbu hotově?</h3>
+						<p class="text-xs text-neutral-600 font-bold mb-4">
+							Opravdu bylo přijato <span class="text-black font-black">{activePayment.totalAmount} Kč</span> v hotovosti?
+						</p>
+						<div class="flex gap-2">
+							<button
+								type="button"
+								onclick={() => (confirmAction = null)}
+								class="flex-1 py-2.5 bg-white hover:bg-neutral-100 text-black text-xs font-black uppercase tracking-wider border-2 border-black cursor-pointer"
+							>
+								ZRUŠIT
+							</button>
+							<button
+								type="button"
+								onclick={() => {
+									confirmAction = null;
+									handleConfirmCash();
+								}}
+								class="flex-1 py-2.5 bg-black hover:bg-neutral-800 text-white text-xs font-black uppercase tracking-wider border-2 border-black cursor-pointer"
+							>
+								POTVRDIT
+							</button>
+						</div>
+					{:else if confirmAction === 'QR'}
+						<div class="inline-flex p-3 bg-neutral-100 border-2 border-black mb-3">
+							<Receipt class="w-8 h-8 text-black" />
+						</div>
+						<h3 class="text-base font-black uppercase mb-1">Zaplatí přes QR?</h3>
+						<p class="text-xs text-neutral-600 font-bold mb-4">
+							Platba zůstane čekající na bankovní převod a můžete obsloužit dalšího zákazníka.
+						</p>
+						<div class="flex gap-2">
+							<button
+								type="button"
+								onclick={() => (confirmAction = null)}
+								class="flex-1 py-2.5 bg-white hover:bg-neutral-100 text-black text-xs font-black uppercase tracking-wider border-2 border-black cursor-pointer"
+							>
+								ZRUŠIT
+							</button>
+							<button
+								type="button"
+								onclick={() => {
+									confirmAction = null;
+									resetForNextCustomer();
+								}}
+								class="flex-1 py-2.5 bg-black hover:bg-neutral-800 text-white text-xs font-black uppercase tracking-wider border-2 border-black cursor-pointer"
+							>
+								POTVRDIT
+							</button>
+						</div>
+					{/if}
+				</div>
+			</div>
+		{/if}
 	{/if}
 
 	<!-- ---------------------------------------------------------------- -->
