@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onMount, onDestroy } from 'svelte';
+	import { onDestroy } from 'svelte';
 	import { auth, cashierPayments } from '$lib/stores.svelte';
 	import { pb } from '$lib/pocketbase';
 	import {
@@ -21,7 +21,7 @@
 
 
 
-	onMount(() => {
+	$effect(() => {
 		if (auth.isCashier) {
 			cashierPayments.init();
 		}
@@ -59,6 +59,10 @@
 				method: 'POST',
 				body: { paymentId: payment.id }
 			});
+			// Optimistic status update for instant visual feedback
+			cashierPayments.payments = cashierPayments.payments.map((p) =>
+				p.id === payment.id ? { ...p, status: 'completed' } : p
+			);
 		} catch (err: any) {
 			console.error('Failed to confirm payment', err);
 			errorMessage = err?.message || 'Chyba při potvrzení platby.';
@@ -78,21 +82,6 @@
 </script>
 
 <div class="flex-1 max-w-4xl w-full mx-auto p-3 sm:p-4 flex flex-col pb-24 bg-white text-black overflow-y-auto">
-	<!-- Page Header -->
-	<div class="flex items-center justify-between mb-4 border-b-2 border-black pb-3">
-		<h1 class="text-lg sm:text-xl font-black uppercase tracking-tight text-black">
-			Bankovní platby
-		</h1>
-
-		<button
-			onclick={() => cashierPayments.refresh()}
-			class="py-1.5 px-3 bg-white text-black hover:bg-neutral-100 border-2 border-black transition-colors cursor-pointer flex items-center gap-1.5 text-xs font-black uppercase"
-			title="Aktualizovat platby"
-		>
-			<RefreshCw class="w-3.5 h-3.5 {cashierPayments.isLoading ? 'animate-spin' : ''}" />
-			<span>OBNOVIT</span>
-		</button>
-	</div>
 
 	{#if errorMessage}
 		<div class="mb-3 p-2.5 bg-red-50 border-2 border-red-600 text-red-700 text-xs font-bold flex items-center gap-2">

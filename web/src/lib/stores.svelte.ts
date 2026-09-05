@@ -222,6 +222,7 @@ class CashierPaymentsStore {
 	payments = $state<Payment[]>([]);
 	isLoading = $state(false);
 	private unsub: (() => void) | null = null;
+	private unsubReconnect: (() => void) | null = null;
 	private isInitialized = false;
 
 	async init() {
@@ -251,27 +252,52 @@ class CashierPaymentsStore {
 			this.unsub();
 			this.unsub = null;
 		}
+		if (this.unsubReconnect) {
+			this.unsubReconnect();
+			this.unsubReconnect = null;
+		}
+
 		try {
-			this.unsub = await pb.collection('payments').subscribe<Payment>('*', async (e) => {
-				if (e.action === 'create' || e.action === 'update') {
-					// Fetch fresh with expand
-					try {
-						const fresh = await pb.collection('payments').getOne<Payment>(e.record.id, {
-							expand: 'buyer,books'
-						});
-						const idx = this.payments.findIndex((p) => p.id === fresh.id);
-						if (idx !== -1) {
-							this.payments[idx] = fresh;
-						} else {
-							this.payments = [fresh, ...this.payments];
-						}
-					} catch (err) {
-						this.refresh();
-					}
-				} else if (e.action === 'delete') {
-					this.payments = this.payments.filter((p) => p.id !== e.record.id);
-				}
+			// Auto-refresh when realtime reconnects (e.g. mobile wakes up from background)
+			this.unsubReconnect = await pb.realtime.subscribe('PB_CONNECT', () => {
+				this.refresh();
 			});
+
+			this.unsub = await pb.collection('payments').subscribe<Payment>(
+				'*',
+				async (e) => {
+					if (e.action === 'create') {
+						let record = e.record;
+						if (!record.expand?.buyer || !record.expand?.books) {
+							try {
+								record = await pb.collection('payments').getOne<Payment>(e.record.id, {
+									expand: 'buyer,books'
+								});
+							} catch (err) {
+								console.error('Failed to expand created payment', err);
+							}
+						}
+						if (!this.payments.some((p) => p.id === record.id)) {
+							this.payments = [record, ...this.payments];
+						}
+					} else if (e.action === 'update') {
+						let record = e.record;
+						if (!record.expand?.buyer || !record.expand?.books) {
+							try {
+								record = await pb.collection('payments').getOne<Payment>(e.record.id, {
+									expand: 'buyer,books'
+								});
+							} catch (err) {
+								console.error('Failed to expand updated payment', err);
+							}
+						}
+						this.payments = this.payments.map((p) => (p.id === record.id ? record : p));
+					} else if (e.action === 'delete') {
+						this.payments = this.payments.filter((p) => p.id !== e.record.id);
+					}
+				},
+				{ expand: 'buyer,books' }
+			);
 		} catch (err) {
 			console.warn('Could not subscribe to payments collection', err);
 		}
@@ -281,6 +307,10 @@ class CashierPaymentsStore {
 		if (this.unsub) {
 			this.unsub();
 			this.unsub = null;
+		}
+		if (this.unsubReconnect) {
+			this.unsubReconnect();
+			this.unsubReconnect = null;
 		}
 		this.payments = [];
 		this.isInitialized = false;
