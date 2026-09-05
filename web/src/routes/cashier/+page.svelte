@@ -390,8 +390,17 @@
 						const cached = codeLookupCache.get(code);
 						if (cached?.type === 'book' && !suppressedBooks.has(code)) {
 							if (cached.book.status === 'available') {
-								const color = idToColor(cached.book.id);
-								drawPricePolygon(ctx, match.position, `${cached.book.price} Kč`, transform, color);
+								if (cached.book.accepted) {
+									const color = idToColor(cached.book.id);
+									drawPricePolygon(ctx, match.position, `${cached.book.price} Kč`, transform, color);
+								} else {
+									drawPricePolygon(ctx, match.position, 'NESCHVÁLENO', transform, {
+										bg: '#ef4444',
+										border: '#b91c1c',
+										text: '#ffffff',
+										lightBg: '#fee2e2'
+									});
+								}
 							} else if (cached.book.status === 'checkout') {
 								drawPricePolygon(ctx, match.position, 'ČEKÁ NA PLATBU', transform, {
 									bg: '#e5e5e5',
@@ -449,7 +458,7 @@
 			}
 		} else if (info?.type === 'book') {
 			const book: Book = info.book;
-			if (book.status === 'available') {
+			if (book.status === 'available' && book.accepted) {
 				if (!suppressedBooks.has(book.id) && !cartBooks.some((b) => b.id === book.id)) {
 					// AUTO-ADD TO CART!
 					cartBooks = [...cartBooks, book];

@@ -21,9 +21,12 @@ import (
 	"github.com/pocketbase/pocketbase"
 	"github.com/pocketbase/pocketbase/apis"
 	"github.com/pocketbase/pocketbase/core"
+	"github.com/pocketbase/pocketbase/plugins/migratecmd"
 	"github.com/pocketbase/pocketbase/tools/filesystem"
 	"github.com/pocketbase/pocketbase/tools/router"
 	"github.com/pocketbase/pocketbase/tools/types"
+
+	_ "burza-server/migrations"
 )
 
 var vsLock sync.Mutex
@@ -45,6 +48,32 @@ func getNextVariableSymbol(app core.App) int {
 func main() {
 	app := pocketbase.New()
 
+	// 1. Register PocketBase migrations support
+	migratecmd.MustRegister(app, app.RootCmd, migratecmd.Config{
+		Dir:         "migrations",
+		Automigrate: false,
+	})
+
+	// Hook: ensure accepted is false when books are created by non-cashiers
+	app.OnRecordCreateRequest("books").BindFunc(func(e *core.RecordRequestEvent) error {
+		if e.Auth == nil || !e.Auth.GetBool("isCashier") {
+			e.Record.Set("accepted", false)
+		}
+		return e.Next()
+	})
+
+	// Hook: enforce that only cashiers can change accepted status
+	app.OnRecordUpdateRequest("books").BindFunc(func(e *core.RecordRequestEvent) error {
+		oldRecord, err := e.App.FindRecordById("books", e.Record.Id)
+		if err == nil && oldRecord != nil {
+			if e.Record.GetBool("accepted") != oldRecord.GetBool("accepted") {
+				if e.Auth == nil || !e.Auth.GetBool("isCashier") {
+					return e.ForbiddenError("Pouze pokladní může měnit stav přijetí knihy.", nil)
+				}
+			}
+		}
+		return e.Next()
+	})
 
 	// 2. Hook: FFmpeg compression of book photo after upload
 	app.OnRecordAfterCreateSuccess("books").BindFunc(func(e *core.RecordEvent) error {
@@ -59,6 +88,15 @@ func main() {
 
 	// 3. Schema & Seed setup on startup, custom API routes & reaper
 	app.OnServe().BindFunc(func(e *core.ServeEvent) error {
+		// Run pending DB migrations
+		runner := core.NewMigrationsRunner(e.App, core.AppMigrations)
+		if applied, err := runner.Up(); err != nil {
+			log.Printf("[MIGRATIONS ERROR] %v", err)
+			return err
+		} else if len(applied) > 0 {
+			log.Printf("[MIGRATIONS] Successfully applied %d migration(s): %v", len(applied), applied)
+		}
+
 		if err := ensureSchema(e.App); err != nil {
 			log.Printf("[SCHEMA ERROR] %v", err)
 			return err
@@ -198,6 +236,7 @@ func ensureSchema(app core.App) error {
 				Values:    []string{"available", "checkout", "bought"},
 				MaxSelect: 1,
 			},
+			&core.BoolField{Name: "accepted"},
 			&core.DateField{Name: "checkoutExpiresAt"},
 		)
 		if err := app.Save(booksColl); err != nil {
@@ -226,6 +265,10 @@ func ensureSchema(app core.App) error {
 		}
 		if booksColl.ViewRule == nil || *booksColl.ViewRule != newRule {
 			booksColl.ViewRule = types.Pointer(newRule)
+			changed = true
+		}
+		if booksColl.Fields.GetByName("accepted") == nil {
+			booksColl.Fields.Add(&core.BoolField{Name: "accepted"})
 			changed = true
 		}
 		if booksColl.Fields.GetByName("created") == nil {
@@ -557,6 +600,10 @@ func registerApiEndpoints(e *core.ServeEvent) {
 
 				if book.GetString("status") != "available" {
 					return router.NewApiError(http.StatusConflict, fmt.Sprintf("Kniha '%s' již není dostupná (stav: %s).", book.Id, book.GetString("status")), nil)
+				}
+
+				if !book.GetBool("accepted") {
+					return router.NewApiError(http.StatusBadRequest, fmt.Sprintf("Kniha '%s' nebyla schválena k prodeji.", book.Id), nil)
 				}
 
 				if book.GetString("seller") == authRecord.Id {
@@ -1033,6 +1080,15 @@ func registerApiEndpoints(e *core.ServeEvent) {
 
 		// 2. Check if book
 		if book, err := c.App.FindRecordById("books", code); err == nil && book != nil {
+			sellerUser, _ := c.App.FindRecordById("users", book.GetString("seller"))
+			var sellerInfo map[string]any
+			if sellerUser != nil {
+				sellerInfo = map[string]any{
+					"id":    sellerUser.Id,
+					"name":  sellerUser.GetString("name"),
+					"email": sellerUser.GetString("email"),
+				}
+			}
 			return c.JSON(http.StatusOK, map[string]any{
 				"type": "book",
 				"book": map[string]any{
@@ -1040,7 +1096,9 @@ func registerApiEndpoints(e *core.ServeEvent) {
 					"price":          book.GetFloat("price"),
 					"photo":          book.GetString("photo"),
 					"status":         book.GetString("status"),
+					"accepted":       book.GetBool("accepted"),
 					"seller":         book.GetString("seller"),
+					"sellerInfo":     sellerInfo,
 					"collectionId":   book.Collection().Id,
 					"collectionName": "books",
 				},
@@ -1049,6 +1107,43 @@ func registerApiEndpoints(e *core.ServeEvent) {
 
 		return c.JSON(http.StatusOK, map[string]any{
 			"type": "unknown",
+		})
+	}).Bind(apis.RequireAuth("users"))
+
+	// POST /api/cashier/toggle-book-accepted - Toggle or set book acceptance status
+	e.Router.POST("/api/cashier/toggle-book-accepted", func(c *core.RequestEvent) error {
+		authRecord := c.Auth
+		if authRecord == nil || !authRecord.GetBool("isCashier") {
+			return c.ForbiddenError("Pouze pokladní má přístup k této funkci.", nil)
+		}
+
+		var req struct {
+			BookId   string `json:"bookId"`
+			Accepted *bool  `json:"accepted"`
+		}
+		if err := c.BindBody(&req); err != nil || strings.TrimSpace(req.BookId) == "" {
+			return c.BadRequestError("Chybí ID knihy.", nil)
+		}
+
+		book, err := c.App.FindRecordById("books", strings.TrimSpace(req.BookId))
+		if err != nil || book == nil {
+			return c.NotFoundError("Kniha nebyla nalezena.", nil)
+		}
+
+		newAccepted := !book.GetBool("accepted")
+		if req.Accepted != nil {
+			newAccepted = *req.Accepted
+		}
+
+		book.Set("accepted", newAccepted)
+		if err := c.App.Save(book); err != nil {
+			return fmt.Errorf("chyba při ukládání stavu knihy: %w", err)
+		}
+
+		return c.JSON(http.StatusOK, map[string]any{
+			"success":  true,
+			"bookId":   book.Id,
+			"accepted": newAccepted,
 		})
 	}).Bind(apis.RequireAuth("users"))
 
@@ -1115,11 +1210,14 @@ func registerApiEndpoints(e *core.ServeEvent) {
 				}
 			}
 
-			// 2. Verify all books are available (DO NOT change status yet)
+			// 2. Verify all books are available and accepted (DO NOT change status yet)
 			for _, bookId := range req.BookIds {
 				b, err := txApp.FindRecordById("books", bookId)
 				if err != nil || b == nil {
 					return c.NotFoundError(fmt.Sprintf("Kniha s ID '%s' nebyla nalezena.", bookId), nil)
+				}
+				if !b.GetBool("accepted") {
+					return router.NewApiError(http.StatusBadRequest, fmt.Sprintf("Kniha '%s' nebyla schválena k prodeji.", b.Id), nil)
 				}
 				status := b.GetString("status")
 				if status != "available" {
@@ -1195,6 +1293,10 @@ func registerApiEndpoints(e *core.ServeEvent) {
 				b, err := txApp.FindRecordById("books", bookId)
 				if err != nil || b == nil {
 					return c.NotFoundError(fmt.Sprintf("Kniha s ID '%s' nebyla nalezena.", bookId), nil)
+				}
+
+				if !b.GetBool("accepted") {
+					return router.NewApiError(http.StatusBadRequest, fmt.Sprintf("Kniha '%s' nebyla schválena k prodeji.", b.Id), nil)
 				}
 
 				status := b.GetString("status")

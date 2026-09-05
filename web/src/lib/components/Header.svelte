@@ -11,6 +11,7 @@
 	let activeModeLabel = $derived.by(() => {
 		if (currentPath === '/seeprice') return 'CENA';
 		if (currentPath === '/cashier') return 'POKLADNA';
+		if (currentPath === '/cashier/accept') return 'PŘÍJEM';
 		if (currentPath === '/cashier/payments') return 'PLATBY';
 		return 'PRODEJ';
 	});
@@ -83,6 +84,18 @@
 							>
 								<span>POKLADNA</span>
 								{#if currentPath === '/cashier'}
+									<span class="text-[10px]">•</span>
+								{/if}
+							</a>
+							<a
+								href="/cashier/accept"
+								onclick={() => (isDropdownOpen = false)}
+								class="px-3 py-2 text-xs font-black uppercase tracking-wider transition-colors flex items-center justify-between {currentPath === '/cashier/accept'
+									? 'bg-black text-white'
+									: 'text-black hover:bg-neutral-100'}"
+							>
+								<span>PŘÍJEM KNIH</span>
+								{#if currentPath === '/cashier/accept'}
 									<span class="text-[10px]">•</span>
 								{/if}
 							</a>

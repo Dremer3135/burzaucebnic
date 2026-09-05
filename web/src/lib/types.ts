@@ -29,6 +29,7 @@ export interface Book {
 	price: number;
 	photo: string;
 	status: BookStatus;
+	accepted?: boolean;
 	created: string;
 	updated: string;
 	expand?: {
