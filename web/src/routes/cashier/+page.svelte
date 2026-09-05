@@ -22,12 +22,9 @@
 		UserMinus,
 		Trash2,
 		X,
-		ChevronUp,
-		ChevronDown,
 		ZoomIn,
 		Check,
-		Camera,
-		Plus
+		Camera
 	} from '@lucide/svelte';
 	import type { Book, Payment, Event as AppEvent } from '$lib/types';
 
@@ -130,8 +127,6 @@
 	let qrCanvas = $state<HTMLCanvasElement | null>(null);
 	let isConfirmingPayment = $state(false);
 	let paymentError = $state('');
-	let manualCodeInput = $state('');
-	let isManualInputOpen = $state(false);
 
 	// Pure standard mode gating:
 	// Scanner strictly scans and auto-adds ONLY in pure standard camera view
@@ -139,7 +134,6 @@
 		paymentMode === null &&
 		!isCheckoutModalOpen &&
 		!previewBook &&
-		!isManualInputOpen &&
 		!sheetExpanded &&
 		!isDraggingSheet
 	);
@@ -596,15 +590,6 @@
 		}, 200);
 	}
 
-	// Manual code entry handler
-	async function handleManualCodeSubmit(e: SubmitEvent) {
-		e.preventDefault();
-		const code = manualCodeInput.trim();
-		if (!code) return;
-		manualCodeInput = '';
-		isManualInputOpen = false;
-		await handleCodeDetected(code);
-	}
 
 	// ----------------------------------------------------
 	// CHECKOUT WORKFLOW
@@ -753,44 +738,6 @@
 			class="absolute inset-0 pointer-events-none w-full h-full z-10"
 		></canvas>
 
-		<!-- Manual Input Toggle (Corner Button) -->
-		{#if paymentMode === null && !sheetExpanded}
-			<button
-				type="button"
-				onclick={() => (isManualInputOpen = !isManualInputOpen)}
-				class="absolute top-3 right-3 z-20 px-2.5 py-1.5 bg-white text-black border-2 border-black font-black text-xs uppercase shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] hover:bg-neutral-100 active:scale-95 transition-transform cursor-pointer flex items-center gap-1"
-				title="Zadat kód ručně"
-			>
-				<Plus class="w-3.5 h-3.5" />
-				<span>KÓD</span>
-			</button>
-		{/if}
-
-		<!-- Manual Code Drawer / Popover -->
-		{#if isManualInputOpen && paymentMode === null}
-			<div class="absolute top-12 right-3 z-30 bg-white border-2 border-black p-3 max-w-xs w-full shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]">
-				<div class="flex items-center justify-between pb-2 border-b-2 border-black mb-2">
-					<span class="text-xs font-black uppercase">RUČNÍ ZADÁNÍ KÓDU</span>
-					<button onclick={() => (isManualInputOpen = false)} class="p-0.5 hover:bg-neutral-100 cursor-pointer">
-						<X class="w-4 h-4" />
-					</button>
-				</div>
-				<form onsubmit={handleManualCodeSubmit} class="flex gap-1.5">
-					<input
-						type="text"
-						bind:value={manualCodeInput}
-						placeholder="Kód knihy / kupujícího"
-						class="flex-1 bg-white border-2 border-black px-2 py-1.5 text-xs font-black uppercase"
-					/>
-					<button
-						type="submit"
-						class="px-3 py-1.5 bg-black text-white text-xs font-black uppercase border-2 border-black hover:bg-neutral-800 cursor-pointer"
-					>
-						PŘIDAT
-					</button>
-				</form>
-			</div>
-		{/if}
 
 		<!-- Camera Error -->
 		{#if cameraError}
@@ -819,7 +766,7 @@
 	{#if paymentMode === null}
 		<div
 			bind:this={sheetElement}
-			class="fixed bottom-0 inset-x-0 z-30 max-w-2xl mx-auto w-full bg-white border-t-4 border-x-4 border-black text-black flex flex-col shadow-[0_-8px_24px_rgba(0,0,0,0.2)] overflow-hidden {isDraggingSheet ? '' : 'transition-transform duration-300 ease-out'}"
+			class="fixed bottom-0 inset-x-0 z-30 max-w-2xl mx-auto w-full bg-white text-black flex flex-col shadow-[0_-8px_24px_rgba(0,0,0,0.2)] overflow-hidden {isDraggingSheet ? '' : 'transition-transform duration-300 ease-out'}"
 			style="height: min(80vh, 650px); transform: translateY({isDraggingSheet ? sheetTranslateY + 'px' : sheetExpanded ? '0px' : 'calc(100% - ' + headerHeight + 'px)'});"
 		>
 			<!-- DRAG / TOGGLE HEADER -->
@@ -875,21 +822,6 @@
 							</button>
 						{/if}
 
-						<button
-							type="button"
-							onclick={(e) => {
-								e.stopPropagation();
-								sheetExpanded = !sheetExpanded;
-							}}
-							class="p-1 hover:bg-neutral-200 text-black cursor-pointer border border-transparent"
-							aria-label={sheetExpanded ? 'Zabalit košík' : 'Rozbalit košík'}
-						>
-							{#if sheetExpanded}
-								<ChevronDown class="w-5 h-5" />
-							{:else}
-								<ChevronUp class="w-5 h-5" />
-							{/if}
-						</button>
 					</div>
 				</div>
 			</div>
@@ -906,85 +838,71 @@
 				class="flex-1 overflow-y-auto p-4 space-y-4"
 				inert={!sheetExpanded ? true : undefined}
 			>
-				<!-- BUYER CARD SECTION -->
-				<div>
-					<div class="text-[10px] font-black uppercase tracking-wider text-neutral-500 mb-1.5">
-						KUPUJÍCÍ
-					</div>
-					{#if currentBuyer}
-						{@const isBuyerSwiping = swipingItemId === 'buyer'}
-						{@const isBuyerRemoving = removingItemIds.has('buyer')}
-						<!-- Swipeable Buyer Card Container with collapse animation -->
+				<!-- BUYER CARD SECTION (Shown only when assigned) -->
+				{#if currentBuyer}
+					{@const isBuyerSwiping = swipingItemId === 'buyer'}
+					{@const isBuyerRemoving = removingItemIds.has('buyer')}
+					<!-- Swipeable Buyer Card Container with collapse animation -->
+					<div
+						data-item-row
+						class="relative overflow-hidden border-2 border-black bg-emerald-50 select-none transition-all duration-200 ease-out {isBuyerRemoving ? 'opacity-0 translate-x-full max-h-0 !my-0 !py-0 !border-0' : 'max-h-24'}"
+					>
+						<!-- Red track revealed on swipe right -->
 						<div
-							data-item-row
-							class="relative overflow-hidden border-2 border-black bg-emerald-50 select-none transition-all duration-200 ease-out {isBuyerRemoving ? 'opacity-0 translate-x-full max-h-0 !my-0 !py-0 !border-0' : 'max-h-24'}"
+							class="absolute inset-0 bg-red-600 flex items-center px-4 gap-2 text-white font-black text-xs uppercase transition-opacity duration-100"
+							style="opacity: {isBuyerSwiping ? Math.min(1, Math.max(0, swipeDeltaX / 50)) : 0};"
 						>
-							<!-- Red track revealed on swipe right -->
-							<div
-								class="absolute inset-0 bg-red-600 flex items-center px-4 gap-2 text-white font-black text-xs uppercase transition-opacity duration-100"
-								style="opacity: {isBuyerSwiping ? Math.min(1, Math.max(0, swipeDeltaX / 50)) : 0};"
-							>
-								<UserMinus class="w-4 h-4 shrink-0" />
-								<span>ODPOJIT KUPUJÍCÍHO</span>
+							<UserMinus class="w-4 h-4 shrink-0" />
+							<span>ODPOJIT KUPUJÍCÍHO</span>
+						</div>
+
+						<!-- Foreground sliding card -->
+						<div
+							role="presentation"
+							class="relative bg-emerald-50 p-3 flex items-center justify-between gap-3 cursor-grab active:cursor-grabbing touch-pan-y {isBuyerSwiping ? '' : 'transition-transform duration-200 ease-out'}"
+							style="transform: translateX({isBuyerSwiping ? swipeDeltaX : 0}px);"
+							onpointerdown={(e) => handleItemPointerDown(e, 'buyer')}
+							onpointermove={(e) => handleItemPointerMove(e, 'buyer')}
+							onpointerup={(e) => handleItemPointerUp(e, 'buyer', true)}
+							onpointercancel={(e) => handleItemPointerUp(e, 'buyer', true)}
+						>
+							<div class="flex items-center gap-2.5 min-w-0">
+								<div class="w-8 h-8 bg-emerald-600 text-white border-2 border-black flex items-center justify-center shrink-0">
+									<User class="w-4 h-4" />
+								</div>
+								<div class="min-w-0">
+									<div class="text-xs font-black uppercase text-black truncate">
+										{currentBuyer.name || 'Zákazník'}
+									</div>
+									<div class="text-[11px] font-mono font-bold text-emerald-800 truncate">
+										{currentBuyer.email}
+									</div>
+								</div>
 							</div>
 
-							<!-- Foreground sliding card -->
-							<div
-								role="presentation"
-								class="relative bg-emerald-50 p-3 flex items-center justify-between gap-3 cursor-grab active:cursor-grabbing touch-pan-y {isBuyerSwiping ? '' : 'transition-transform duration-200 ease-out'}"
-								style="transform: translateX({isBuyerSwiping ? swipeDeltaX : 0}px);"
-								onpointerdown={(e) => handleItemPointerDown(e, 'buyer')}
-								onpointermove={(e) => handleItemPointerMove(e, 'buyer')}
-								onpointerup={(e) => handleItemPointerUp(e, 'buyer', true)}
-								onpointercancel={(e) => handleItemPointerUp(e, 'buyer', true)}
-							>
-								<div class="flex items-center gap-2.5 min-w-0">
-									<div class="w-8 h-8 bg-emerald-600 text-white border-2 border-black flex items-center justify-center shrink-0">
-										<User class="w-4 h-4" />
-									</div>
-									<div class="min-w-0">
-										<div class="text-xs font-black uppercase text-black truncate">
-											{currentBuyer.name || 'Zákazník'}
-										</div>
-										<div class="text-[11px] font-mono font-bold text-emerald-800 truncate">
-											{currentBuyer.email}
-										</div>
-									</div>
-								</div>
-
-								<div class="flex items-center gap-2 shrink-0">
-									<span class="hidden sm:inline text-[9px] font-bold text-neutral-500 uppercase">
-										POTAŽENÍM DOPRAVA ODPOJIT
-									</span>
-									<!-- Explicit 1-tap Unlink Button -->
-									<button
-										type="button"
-										onclick={(e) => {
-											e.stopPropagation();
-											triggerUnlinkBuyer();
-										}}
-										class="p-1.5 border-2 border-black bg-white hover:bg-red-600 hover:text-white text-black transition-colors cursor-pointer shrink-0 active:scale-95"
-										title="Odpojit kupujícího"
-									>
-										<X class="w-4 h-4" />
-									</button>
-								</div>
+							<div class="flex items-center gap-2 shrink-0">
+								<span class="hidden sm:inline text-[9px] font-bold text-neutral-500 uppercase">
+									POTAŽENÍM DOPRAVA ODPOJIT
+								</span>
+								<!-- Explicit 1-tap Unlink Button -->
+								<button
+									type="button"
+									onclick={(e) => {
+										e.stopPropagation();
+										triggerUnlinkBuyer();
+									}}
+									class="p-1.5 border-2 border-black bg-white hover:bg-red-600 hover:text-white text-black transition-colors cursor-pointer shrink-0 active:scale-95"
+									title="Odpojit kupujícího"
+								>
+									<X class="w-4 h-4" />
+								</button>
 							</div>
 						</div>
-					{:else}
-						<!-- No buyer hint -->
-						<p class="text-xs font-bold uppercase text-neutral-400 py-1">
-							Kupující nepřiřazen
-						</p>
-					{/if}
-				</div>
+					</div>
+				{/if}
 
 				<!-- BOOKS LIST SECTION -->
 				<div>
-					<div class="flex items-center justify-between text-[10px] font-black uppercase tracking-wider text-neutral-500 mb-1.5">
-						<span>POLOŽKY V KOŠÍKU ({cartBooks.length})</span>
-						<span>POTAŽENÍM DOPRAVA ODSTRANIT</span>
-					</div>
 
 					{#if cartBooks.length === 0}
 						<p class="text-xs font-bold uppercase text-neutral-400 text-center py-6">
@@ -1104,7 +1022,7 @@
 						class="py-3 px-6 bg-black text-white hover:bg-neutral-800 font-black text-xs uppercase tracking-wider border-2 border-black flex items-center gap-2 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
 					>
 						<Banknote class="w-4 h-4" />
-						<span>ZAPLATIT ({totalAmount} Kč)</span>
+						<span>ZAPLATIT</span>
 					</button>
 				</div>
 			</div>
