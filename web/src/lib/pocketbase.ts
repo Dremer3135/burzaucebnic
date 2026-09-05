@@ -57,7 +57,7 @@ export async function fetchActiveEvent(): Promise<Event | null> {
 	try {
 		const records = await pb.collection('events').getFullList<Event>({
 			filter: 'active = true',
-			sort: '-created'
+			sort: '-id'
 		});
 		const event = records.length > 0 ? records[0] : null;
 		activeEvent.set(event);

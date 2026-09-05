@@ -7,7 +7,7 @@ export const load: PageServerLoad = async ({ locals }) => {
 		try {
 			const events = await locals.pb.collection('events').getFullList({
 				filter: 'active = true',
-				sort: '-created'
+				sort: '-id'
 			});
 			if (events.length > 0 && events[0].active) {
 				targetRoute = events[0].defaultPage === 'seeprice' ? '/seeprice' : '/sell';

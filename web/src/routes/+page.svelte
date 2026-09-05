@@ -2,18 +2,33 @@
 	import { goto } from '$app/navigation';
 	import { auth, eventStore } from '$lib/stores.svelte';
 	import LoginModal from '$lib/components/LoginModal.svelte';
-	import { Tag, ScanLine, Clock, ShieldCheck } from '@lucide/svelte';
+	import { Tag, ScanLine, Clock, ShieldCheck, RefreshCw } from '@lucide/svelte';
 
-	function handleLoginSuccess() {
-		if (eventStore.isMarketActive() && eventStore.event) {
+	function redirectToDefaultPage() {
+		if (auth.user && eventStore.isMarketActive() && eventStore.event) {
 			const target = eventStore.event.defaultPage === 'seeprice' ? '/seeprice' : '/sell';
 			goto(target);
 		}
 	}
+
+	$effect(() => {
+		if (!eventStore.isLoading) {
+			redirectToDefaultPage();
+		}
+	});
+
+	function handleLoginSuccess() {
+		redirectToDefaultPage();
+	}
 </script>
 
 <div class="flex-1 flex flex-col items-center justify-center p-4 bg-white text-black overflow-y-auto">
-	{#if !auth.user}
+	{#if eventStore.isLoading}
+		<div class="flex flex-col items-center justify-center py-16 gap-3">
+			<RefreshCw class="w-8 h-8 animate-spin text-black" />
+			<span class="text-xs font-black uppercase text-neutral-400">Načítám stav burzy...</span>
+		</div>
+	{:else if !auth.user}
 		<div class="w-full flex justify-center py-6">
 			<LoginModal onsuccess={handleLoginSuccess} />
 		</div>

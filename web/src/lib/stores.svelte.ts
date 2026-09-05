@@ -100,7 +100,7 @@ class EventStore {
 		try {
 			const list = await pb.collection('events').getFullList<Event>({
 				filter: 'active = true',
-				sort: '-created'
+				sort: '-id'
 			});
 			this.event = list.length > 0 ? list[0] : null;
 		} catch (err) {
@@ -161,7 +161,7 @@ class SellerBooksStore {
 		try {
 			const res = await pb.collection('books').getFullList<Book>({
 				filter: `seller = "${this.currentUserId}"`,
-				sort: '-created'
+				sort: '-id'
 			});
 			this.books = res;
 		} catch (err) {
@@ -237,7 +237,7 @@ class CashierPaymentsStore {
 		try {
 			const res = await pb.collection('payments').getFullList<Payment>({
 				expand: 'buyer,books',
-				sort: '-created'
+				sort: '-id'
 			});
 			this.payments = res;
 		} catch (err) {

@@ -135,6 +135,14 @@ func ensureSchema(app core.App) error {
 			})
 			changed = true
 		}
+		if eventsColl.Fields.GetByName("created") == nil {
+			eventsColl.Fields.Add(&core.AutodateField{Name: "created", OnCreate: true})
+			changed = true
+		}
+		if eventsColl.Fields.GetByName("updated") == nil {
+			eventsColl.Fields.Add(&core.AutodateField{Name: "updated", OnCreate: true, OnUpdate: true})
+			changed = true
+		}
 		if changed {
 			if err := app.Save(eventsColl); err != nil {
 				return fmt.Errorf("updating events collection: %w", err)
@@ -207,6 +215,14 @@ func ensureSchema(app core.App) error {
 			booksColl.ViewRule = types.Pointer(newRule)
 			changed = true
 		}
+		if booksColl.Fields.GetByName("created") == nil {
+			booksColl.Fields.Add(&core.AutodateField{Name: "created", OnCreate: true})
+			changed = true
+		}
+		if booksColl.Fields.GetByName("updated") == nil {
+			booksColl.Fields.Add(&core.AutodateField{Name: "updated", OnCreate: true, OnUpdate: true})
+			changed = true
+		}
 		if changed {
 			if err := app.Save(booksColl); err != nil {
 				return fmt.Errorf("updating books collection: %w", err)
@@ -246,9 +262,26 @@ func ensureSchema(app core.App) error {
 				Name: "cashier",
 				CollectionId: usersColl.Id, MaxSelect: 1,
 			},
+			&core.AutodateField{Name: "created", OnCreate: true},
+			&core.AutodateField{Name: "updated", OnCreate: true, OnUpdate: true},
 		)
 		if err := app.Save(paymentsColl); err != nil {
 			return fmt.Errorf("creating payments collection: %w", err)
+		}
+	} else {
+		var pChanged bool
+		if paymentsColl.Fields.GetByName("created") == nil {
+			paymentsColl.Fields.Add(&core.AutodateField{Name: "created", OnCreate: true})
+			pChanged = true
+		}
+		if paymentsColl.Fields.GetByName("updated") == nil {
+			paymentsColl.Fields.Add(&core.AutodateField{Name: "updated", OnCreate: true, OnUpdate: true})
+			pChanged = true
+		}
+		if pChanged {
+			if err := app.Save(paymentsColl); err != nil {
+				return fmt.Errorf("updating payments collection: %w", err)
+			}
 		}
 	}
 
