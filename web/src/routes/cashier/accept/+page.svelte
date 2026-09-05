@@ -497,11 +497,11 @@
 			</div>
 		{/if}
 
-		<!-- Bottom Floating Widget for All Currently Seen Books (Max height ~50vh, scrollable) -->
+		<!-- Bottom Floating Widget for All Currently Seen Books (Max height ~1/3 page height, scrollable) -->
 		{#if currentlySeenBooks.length > 0}
-			<div class="absolute bottom-3 inset-x-3 sm:max-w-lg sm:mx-auto z-20 pointer-events-auto max-h-[50vh] flex flex-col">
+			<div class="absolute bottom-3 inset-x-3 sm:max-w-lg sm:mx-auto z-20 pointer-events-auto max-h-[33.3vh] flex flex-col">
 				<!-- Scrollable Container -->
-				<div class="overflow-y-auto space-y-2 max-h-[50vh] pr-0.5" style="overscroll-behavior: contain;">
+				<div class="overflow-y-auto space-y-2 max-h-[33.3vh] pr-0.5" style="overscroll-behavior: contain;">
 					{#each currentlySeenBooks as book (book.id)}
 						{@const col = idToColor(book.id)}
 						<div class="bg-white border-2 border-black shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] p-2.5 sm:p-3 flex items-center justify-between gap-3 relative overflow-hidden">
