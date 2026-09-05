@@ -6,6 +6,7 @@
 		getVideoTransform,
 		scanFrameForAllDataMatrices,
 		drawPricePolygon,
+		idToColor,
 		type ScanMatch
 	} from '$lib/scanner';
 	import {
@@ -58,8 +59,8 @@
 	const codeLookupCache = new Map<string, any>();
 	const inFlightLookups = new Set<string>();
 
-	// Currently focused book in camera scanner card (ONLY shown after a code is detected)
-	let activeScannedBook = $state<Book | null>(null);
+	// All books currently seen in the camera frame
+	let currentlySeenBooks = $state<Book[]>([]);
 
 	// Statistics for list filters
 	let totalCount = $derived(books.length);
@@ -154,15 +155,14 @@
 					if (cached?.type === 'book') {
 						codeLookupCache.set(e.record.id, { ...cached, book: { ...cached.book, ...e.record } });
 					}
-					if (activeScannedBook?.id === e.record.id) {
-						activeScannedBook = { ...activeScannedBook, ...e.record };
-					}
+					currentlySeenBooks = currentlySeenBooks.map((b) =>
+						b.id === e.record.id ? { ...b, ...e.record } : b
+					);
 				} else if (e.action === 'delete') {
 					books = books.filter((b) => b.id !== e.record.id);
 					codeLookupCache.delete(e.record.id);
-					if (activeScannedBook?.id === e.record.id) {
-						activeScannedBook = null;
-					}
+					trackedMatches.delete(e.record.id);
+					currentlySeenBooks = currentlySeenBooks.filter((b) => b.id !== e.record.id);
 				}
 			}, { expand: 'seller,buyer' })
 			.catch((err) => console.error('Books realtime subscribe error:', err));
@@ -218,6 +218,7 @@
 			mediaStream = null;
 		}
 		trackedMatches.clear();
+		currentlySeenBooks = [];
 	}
 
 	let isDetecting = false;
@@ -233,7 +234,7 @@
 
 			try {
 				if (captureCanvas && videoElement && videoElement.videoWidth > 0) {
-					const matches = await scanFrameForAllDataMatrices(captureCanvas, videoElement, 6);
+					const matches = await scanFrameForAllDataMatrices(captureCanvas, videoElement, 8);
 					const currentTime = Date.now();
 
 					// Record detected matches
@@ -246,12 +247,14 @@
 						handleScannedCode(code);
 					}
 
-					// Prune matches not seen for 350ms
+					// Prune matches not seen for 1000ms
 					for (const [code, tracked] of trackedMatches.entries()) {
-						if (currentTime - tracked.lastSeen > 350) {
+						if (currentTime - tracked.lastSeen > 1000) {
 							trackedMatches.delete(code);
 						}
 					}
+
+					updateCurrentlySeenBooks();
 				}
 			} catch (err) {
 				console.error('Intake detection error:', err);
@@ -262,6 +265,27 @@
 
 		if (isScanningLoopActive) {
 			setTimeout(runDetectionLoop, 25);
+		}
+	}
+
+	function updateCurrentlySeenBooks() {
+		const seen: Book[] = [];
+		for (const [code] of trackedMatches.entries()) {
+			const cached = codeLookupCache.get(code);
+			if (cached?.type === 'book') {
+				seen.push(cached.book);
+			}
+		}
+
+		// Stable sort by ID so cards never change order when accepted or rejected
+		seen.sort((a, b) => a.id.localeCompare(b.id));
+
+		const isDifferent =
+			seen.length !== currentlySeenBooks.length ||
+			seen.some((b, i) => b.id !== currentlySeenBooks[i].id || b.accepted !== currentlySeenBooks[i].accepted);
+
+		if (isDifferent) {
+			currentlySeenBooks = seen;
 		}
 	}
 
@@ -301,21 +325,8 @@
 
 					if (cached?.type === 'book') {
 						const book: Book = cached.book;
-						if (book.accepted) {
-							drawPricePolygon(ctx, match.position, `✓ PŘIJATO`, transform, {
-								bg: '#059669',
-								border: '#047857',
-								text: '#ffffff',
-								lightBg: '#d1fae5'
-							});
-						} else {
-							drawPricePolygon(ctx, match.position, `✗ K PŘIJETÍ`, transform, {
-								bg: '#ea580c',
-								border: '#c2410c',
-								text: '#ffffff',
-								lightBg: '#ffedd5'
-							});
-						}
+						const color = idToColor(book.id);
+						drawPricePolygon(ctx, match.position, `${book.price} Kč`, transform, color);
 					}
 				}
 
@@ -347,12 +358,7 @@
 		}
 
 		if (cached?.type === 'book') {
-			const book: Book = cached.book;
-			// Set as active book in scanner card if not set or if different
-			if (!activeScannedBook || activeScannedBook.id !== book.id) {
-				activeScannedBook = book;
-				if (navigator.vibrate) navigator.vibrate(40);
-			}
+			updateCurrentlySeenBooks();
 		}
 	}
 
@@ -385,10 +391,10 @@
 				cached.book.accepted = updatedAccepted;
 			}
 
-			// Update active scanned book
-			if (activeScannedBook?.id === book.id) {
-				activeScannedBook = { ...activeScannedBook, accepted: updatedAccepted };
-			}
+			// Update currently seen books
+			currentlySeenBooks = currentlySeenBooks.map((b) =>
+				b.id === book.id ? { ...b, accepted: updatedAccepted } : b
+			);
 
 			if (navigator.vibrate) {
 				navigator.vibrate(updatedAccepted ? [60] : [30, 30]);
@@ -491,114 +497,101 @@
 			</div>
 		{/if}
 
-		<!-- Bottom Floating Card for Active Book (Appears ONLY when a book is detected) -->
-		{#if activeScannedBook}
-			<div class="absolute bottom-3 inset-x-3 sm:max-w-lg sm:mx-auto z-20 pointer-events-auto">
-				<div class="bg-white border-2 border-black shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] p-3 flex flex-col gap-2.5">
-					<!-- Upper row: Photo, ID, Price, Status -->
-					<div class="flex items-center gap-3">
-						<!-- Thumbnail -->
-						{#if activeScannedBook.photo}
-							<button
-								type="button"
-								onclick={() => (selectedPhotoBook = activeScannedBook)}
-								class="relative w-14 h-18 bg-neutral-100 border-2 border-black shrink-0 overflow-hidden group cursor-pointer"
-								title="Zvětšit foto"
-							>
-								<img
-									src={getBookThumbnailUrl(activeScannedBook)}
-									alt="Kniha"
-									class="w-full h-full object-cover group-hover:scale-105 transition-transform"
-								/>
-								<div class="absolute inset-0 bg-black/30 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
-									<Eye class="w-4 h-4 text-white" />
+		<!-- Bottom Floating Widget for All Currently Seen Books (Max height ~50vh, scrollable) -->
+		{#if currentlySeenBooks.length > 0}
+			<div class="absolute bottom-3 inset-x-3 sm:max-w-lg sm:mx-auto z-20 pointer-events-auto max-h-[50vh] flex flex-col">
+				<!-- Scrollable Container -->
+				<div class="overflow-y-auto space-y-2 max-h-[50vh] pr-0.5" style="overscroll-behavior: contain;">
+					{#each currentlySeenBooks as book (book.id)}
+						{@const col = idToColor(book.id)}
+						<div class="bg-white border-2 border-black shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] p-2.5 sm:p-3 flex items-center justify-between gap-3 relative overflow-hidden">
+							<!-- Left: Hash Color Stripe -->
+							<div
+								class="w-3 self-stretch -my-2.5 -ml-2.5 sm:-my-3 sm:-ml-3 border-r-2 border-black shrink-0"
+								style="background-color: {col.bg};"
+							></div>
+
+							<!-- Thumbnail photo -->
+							{#if book.photo}
+								<button
+									type="button"
+									onclick={() => (selectedPhotoBook = book)}
+									class="relative w-12 h-16 bg-neutral-100 border-2 border-black shrink-0 overflow-hidden group cursor-pointer"
+									title="Zvětšit foto"
+								>
+									<img
+										src={getBookThumbnailUrl(book)}
+										alt="Kniha"
+										class="w-full h-full object-cover group-hover:scale-105 transition-transform"
+									/>
+									<div class="absolute inset-0 bg-black/30 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
+										<Eye class="w-3.5 h-3.5 text-white" />
+									</div>
+								</button>
+							{:else}
+								<div class="w-12 h-16 bg-neutral-100 border-2 border-black shrink-0 flex items-center justify-center text-neutral-400">
+									<BookOpen class="w-5 h-5" />
 								</div>
-							</button>
-						{:else}
-							<div class="w-14 h-18 bg-neutral-100 border-2 border-black shrink-0 flex items-center justify-center text-neutral-400">
-								<BookOpen class="w-6 h-6" />
-							</div>
-						{/if}
+							{/if}
 
-						<!-- Details -->
-						<div class="flex-1 min-w-0">
-							<div class="flex items-center justify-between gap-1">
-								<span class="text-xs font-mono font-bold text-neutral-600 truncate">
-									#{activeScannedBook.id}
-								</span>
-								<span class="text-base font-black text-black shrink-0">
-									{activeScannedBook.price} Kč
-								</span>
-							</div>
-
-							<div class="mt-0.5 text-xs font-black uppercase text-black truncate">
-								{activeScannedBook.expand?.seller?.name || 'Prodejce'}
-							</div>
-							<div class="text-[11px] font-mono text-neutral-500 truncate">
-								{activeScannedBook.expand?.seller?.email || ''}
-							</div>
-
-							<!-- Status Pill -->
-							<div class="mt-1 flex items-center gap-1.5">
-								{#if activeScannedBook.accepted}
-									<span class="inline-flex items-center gap-1 px-1.5 py-0.5 bg-emerald-100 border border-emerald-700 text-emerald-800 text-[10px] font-black uppercase tracking-wide">
-										<Check class="w-3 h-3" />
-										PŘIJATO K PRODEJI
+							<!-- Middle details: Price, ID, Seller info -->
+							<div class="min-w-0 flex-1 flex flex-col justify-center">
+								<div class="flex items-baseline justify-between gap-2">
+									<span class="text-base sm:text-lg font-black text-black leading-none">
+										{book.price} Kč
 									</span>
+									<span
+										class="text-[10px] font-mono font-black px-1.5 py-0.5 border border-black truncate max-w-[120px]"
+										style="background-color: {col.lightBg}; color: {col.border};"
+									>
+										#{book.id}
+									</span>
+								</div>
+
+								<div class="mt-1 text-xs font-black uppercase text-black truncate leading-tight">
+									{book.expand?.seller?.name || 'Prodejce'}
+								</div>
+								{#if book.expand?.seller?.email}
+									<div class="mt-0.5 text-[11px] font-mono text-neutral-500 truncate leading-tight">
+										{book.expand?.seller?.email}
+									</div>
+								{/if}
+							</div>
+
+							<!-- Right: Big Action Button -->
+							<div class="shrink-0 flex items-center">
+								{#if !book.accepted}
+									<button
+										type="button"
+										disabled={actionLoadingId === book.id}
+										onclick={() => toggleBookAccepted(book, true)}
+										class="h-11 px-4 bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs uppercase tracking-wider border-2 border-black shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] active:translate-x-0.5 active:translate-y-0.5 active:shadow-none transition-all flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-60 min-w-[110px]"
+									>
+										{#if actionLoadingId === book.id}
+											<RefreshCw class="w-4 h-4 animate-spin" />
+										{:else}
+											<Check class="w-4 h-4 stroke-[3]" />
+											<span>PŘIJMOUT</span>
+										{/if}
+									</button>
 								{:else}
-									<span class="inline-flex items-center gap-1 px-1.5 py-0.5 bg-amber-100 border border-amber-700 text-amber-800 text-[10px] font-black uppercase tracking-wide">
-										<AlertCircle class="w-3 h-3" />
-										ČEKÁ NA PŘIJETÍ
-									</span>
+									<button
+										type="button"
+										disabled={actionLoadingId === book.id}
+										onclick={() => toggleBookAccepted(book, false)}
+										class="h-11 px-3 bg-white hover:bg-red-50 hover:text-red-700 hover:border-red-600 text-neutral-600 font-black text-xs uppercase tracking-wider border-2 border-black shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] active:translate-x-0.5 active:translate-y-0.5 active:shadow-none transition-all flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-60 min-w-[110px]"
+									>
+										{#if actionLoadingId === book.id}
+											<RefreshCw class="w-3.5 h-3.5 animate-spin" />
+										{:else}
+											<X class="w-4 h-4 stroke-[2.5]" />
+											<span>ZRUŠIT</span>
+										{/if}
+									</button>
 								{/if}
 							</div>
 						</div>
-
-						<!-- Dismiss card button -->
-						<button
-							type="button"
-							onclick={() => (activeScannedBook = null)}
-							class="self-start p-1 text-neutral-400 hover:text-black cursor-pointer"
-							title="Zavřít kartu"
-						>
-							<X class="w-4 h-4" />
-						</button>
-					</div>
-
-					<!-- Action Button -->
-					<div>
-						{#if !activeScannedBook.accepted}
-							<button
-								type="button"
-								disabled={actionLoadingId === activeScannedBook.id}
-								onclick={() => toggleBookAccepted(activeScannedBook!, true)}
-								class="w-full py-2.5 px-4 bg-emerald-600 hover:bg-emerald-700 text-white font-black text-sm uppercase tracking-wider border-2 border-black shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] active:translate-x-0.5 active:translate-y-0.5 active:shadow-none transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-60"
-							>
-								{#if actionLoadingId === activeScannedBook.id}
-									<RefreshCw class="w-4 h-4 animate-spin" />
-									<span>UKLÁDÁM...</span>
-								{:else}
-									<Check class="w-5 h-5 stroke-[3]" />
-									<span>PŘIJMOUT KNIHU</span>
-								{/if}
-							</button>
-						{:else}
-							<button
-								type="button"
-								disabled={actionLoadingId === activeScannedBook.id}
-								onclick={() => toggleBookAccepted(activeScannedBook!, false)}
-								class="w-full py-2 px-4 bg-neutral-200 hover:bg-red-100 hover:text-red-700 hover:border-red-600 text-neutral-700 font-black text-xs uppercase tracking-wider border-2 border-black active:translate-x-0.5 active:translate-y-0.5 transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-60"
-							>
-								{#if actionLoadingId === activeScannedBook.id}
-									<RefreshCw class="w-3.5 h-3.5 animate-spin" />
-									<span>UKLÁDÁM...</span>
-								{:else}
-									<X class="w-4 h-4" />
-									<span>ZRUŠIT PŘIJETÍ (VRÁTIT)</span>
-								{/if}
-							</button>
-						{/if}
-					</div>
+					{/each}
 				</div>
 			</div>
 		{/if}
