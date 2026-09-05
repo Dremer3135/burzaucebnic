@@ -4,15 +4,13 @@
 	import { pb } from '$lib/pocketbase';
 	import {
 		Receipt,
-		Scan,
 		CheckCircle2,
 		Clock,
 		Search,
 		BookOpen,
 		RefreshCw,
 		Check,
-		AlertCircle,
-		ChevronLeft
+		AlertCircle
 	} from '@lucide/svelte';
 	import type { Payment } from '$lib/types';
 
@@ -79,45 +77,20 @@
 	}
 </script>
 
-<div class="flex-1 max-w-4xl w-full mx-auto p-2 sm:p-4 flex flex-col pb-24 bg-white text-black overflow-y-auto">
-	<!-- Unified Top Navigation Bar -->
-	<div class="flex items-center gap-1.5 bg-white border-2 border-black p-1 mb-4 shadow-[2px_2px_0px_0px_rgba(0,0,0,1)]">
-		<!-- Back to Burza -->
-		<a
-			href="/sell"
-			class="px-2 py-1.5 border border-black bg-white text-black font-black text-xs uppercase flex items-center gap-1 hover:bg-neutral-100 transition-colors shrink-0"
-			title="Zpět na burzu"
-		>
-			<ChevronLeft class="w-3.5 h-3.5" />
-			<span class="hidden sm:inline">BURZA</span>
-		</a>
+<div class="flex-1 max-w-4xl w-full mx-auto p-3 sm:p-4 flex flex-col pb-24 bg-white text-black overflow-y-auto">
+	<!-- Page Header -->
+	<div class="flex items-center justify-between mb-4 border-b-2 border-black pb-3">
+		<h1 class="text-lg sm:text-xl font-black uppercase tracking-tight text-black">
+			Bankovní platby
+		</h1>
 
-		<!-- Switch: Pokladna / Platby -->
-		<div class="flex items-center flex-1 gap-1">
-			<a
-				href="/cashier"
-				class="flex-1 py-1.5 px-2 text-center text-xs font-black uppercase tracking-wider text-black hover:bg-neutral-100 flex items-center justify-center gap-1 transition-colors truncate"
-			>
-				<Scan class="w-3.5 h-3.5 shrink-0" />
-				<span>POKLADNA</span>
-			</a>
-			<a
-				href="/cashier/payments"
-				class="flex-1 py-1.5 px-2 text-center text-xs font-black uppercase tracking-wider bg-black text-white flex items-center justify-center gap-1 transition-colors truncate"
-			>
-				<Receipt class="w-3.5 h-3.5 shrink-0" />
-				<span>PLATBY</span>
-			</a>
-		</div>
-
-		<!-- Refresh button -->
 		<button
 			onclick={() => cashierPayments.refresh()}
-			class="px-2 py-1.5 border border-black bg-white text-black hover:bg-neutral-100 font-black text-xs uppercase flex items-center gap-1 transition-colors cursor-pointer shrink-0"
-			title="Aktualizovat"
+			class="py-1.5 px-3 bg-white text-black hover:bg-neutral-100 border-2 border-black transition-colors cursor-pointer flex items-center gap-1.5 text-xs font-black uppercase"
+			title="Aktualizovat platby"
 		>
 			<RefreshCw class="w-3.5 h-3.5 {cashierPayments.isLoading ? 'animate-spin' : ''}" />
-			<span class="hidden sm:inline">OBNOVIT</span>
+			<span>OBNOVIT</span>
 		</button>
 	</div>
 

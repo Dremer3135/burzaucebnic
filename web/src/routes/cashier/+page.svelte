@@ -24,7 +24,6 @@
 		X,
 		ChevronUp,
 		ChevronDown,
-		ChevronLeft,
 		ZoomIn,
 		Check,
 		Camera,
@@ -735,50 +734,6 @@
 </script>
 
 <div class="relative flex-1 w-full h-full bg-black overflow-hidden flex flex-col select-none touch-none">
-	<!-- UNIFIED CASHIER TOP BAR -->
-	<div class="absolute top-2 inset-x-2 z-20 flex items-center justify-between pointer-events-auto max-w-2xl mx-auto">
-		<div class="flex items-center gap-1.5 bg-white/95 border-2 border-black p-1 shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] w-full">
-			<!-- Back to Burza -->
-			<a
-				href="/sell"
-				class="px-2 py-1.5 border border-black bg-white text-black font-black text-xs uppercase flex items-center gap-1 hover:bg-neutral-100 transition-colors shrink-0"
-				title="Zpět na burzu"
-			>
-				<ChevronLeft class="w-3.5 h-3.5" />
-				<span class="hidden sm:inline">BURZA</span>
-			</a>
-
-			<!-- Switch: Pokladna / Platby -->
-			<div class="flex items-center flex-1 gap-1">
-				<a
-					href="/cashier"
-					class="flex-1 py-1.5 px-2 text-center text-xs font-black uppercase tracking-wider bg-black text-white flex items-center justify-center gap-1 transition-colors truncate"
-				>
-					<Scan class="w-3.5 h-3.5 shrink-0" />
-					<span>POKLADNA</span>
-				</a>
-				<a
-					href="/cashier/payments"
-					class="flex-1 py-1.5 px-2 text-center text-xs font-black uppercase tracking-wider text-black hover:bg-neutral-100 flex items-center justify-center gap-1 transition-colors truncate"
-				>
-					<Receipt class="w-3.5 h-3.5 shrink-0" />
-					<span>PLATBY</span>
-				</a>
-			</div>
-
-			<!-- Add manual code button -->
-			<button
-				type="button"
-				onclick={() => (isManualInputOpen = !isManualInputOpen)}
-				class="px-2 py-1.5 border border-black font-black text-xs uppercase flex items-center gap-1 transition-colors cursor-pointer shrink-0 {isManualInputOpen ? 'bg-black text-white' : 'bg-white text-black hover:bg-neutral-100'}"
-				title="Zadat kód ručně"
-			>
-				<Plus class="w-3.5 h-3.5" />
-				<span class="hidden sm:inline">KÓD</span>
-			</button>
-		</div>
-	</div>
-
 	<!-- CAMERA & SCANNER VIEWPORT -->
 	<div class="relative flex-1 w-full h-full bg-black overflow-hidden flex items-center justify-center">
 		<video
@@ -798,9 +753,22 @@
 			class="absolute inset-0 pointer-events-none w-full h-full z-10"
 		></canvas>
 
+		<!-- Manual Input Toggle (Corner Button) -->
+		{#if paymentMode === null && !sheetExpanded}
+			<button
+				type="button"
+				onclick={() => (isManualInputOpen = !isManualInputOpen)}
+				class="absolute top-3 right-3 z-20 px-2.5 py-1.5 bg-white text-black border-2 border-black font-black text-xs uppercase shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] hover:bg-neutral-100 active:scale-95 transition-transform cursor-pointer flex items-center gap-1"
+				title="Zadat kód ručně"
+			>
+				<Plus class="w-3.5 h-3.5" />
+				<span>KÓD</span>
+			</button>
+		{/if}
+
 		<!-- Manual Code Drawer / Popover -->
 		{#if isManualInputOpen && paymentMode === null}
-			<div class="absolute top-14 right-2 z-30 bg-white border-2 border-black p-3 max-w-xs w-full shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]">
+			<div class="absolute top-12 right-3 z-30 bg-white border-2 border-black p-3 max-w-xs w-full shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]">
 				<div class="flex items-center justify-between pb-2 border-b-2 border-black mb-2">
 					<span class="text-xs font-black uppercase">RUČNÍ ZADÁNÍ KÓDU</span>
 					<button onclick={() => (isManualInputOpen = false)} class="p-0.5 hover:bg-neutral-100 cursor-pointer">
