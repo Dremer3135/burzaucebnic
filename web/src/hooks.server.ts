@@ -3,7 +3,9 @@ import type { Handle } from '@sveltejs/kit';
 import type { User } from '$lib/types';
 
 export const handle: Handle = async ({ event, resolve }) => {
-	event.locals.pb = new PocketBase('http://127.0.0.1:8090');
+	const pbPort = process.env.PB_PORT || '8090';
+	const pbInternalUrl = process.env.PB_INTERNAL_URL || `http://127.0.0.1:${pbPort}`;
+	event.locals.pb = new PocketBase(pbInternalUrl);
 
 	// Load auth state from request cookie
 	const cookie = event.request.headers.get('cookie') || '';
