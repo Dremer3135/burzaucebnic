@@ -9,7 +9,7 @@
 		type ScanMatch
 	} from '$lib/scanner';
 	import { renderDataMatrix } from '$lib/barcodes';
-	import { RefreshCw, AlertCircle, X } from '@lucide/svelte';
+	import { RefreshCw, AlertCircle } from '@lucide/svelte';
 
 	let videoElement = $state<HTMLVideoElement | null>(null);
 	let captureCanvas = $state<HTMLCanvasElement | null>(null);
@@ -260,7 +260,7 @@
 	<!-- Enlarged High-Contrast Buyer ID Modal -->
 	{#if isUserCodeModalOpen && auth.user}
 		<div
-			class="fixed inset-0 bg-black/80 backdrop-blur-xs flex items-center justify-center p-4 z-50 select-text"
+			class="fixed inset-0 bg-black/80 backdrop-blur-xs flex items-start justify-center pt-[18vh] p-4 z-50 select-text"
 			role="dialog"
 			tabindex="-1"
 			aria-modal="true"
@@ -274,19 +274,10 @@
 			></div>
 
 			<div
-				class="bg-white border-4 border-black p-6 relative flex items-center justify-center text-black shadow-[6px_6px_0px_0px_rgba(0,0,0,1)] z-10"
+				class="bg-white border-4 border-black p-4 sm:p-5 relative flex items-center justify-center text-black shadow-[6px_6px_0px_0px_rgba(0,0,0,1)] z-10"
 			>
-				<button
-					type="button"
-					onclick={() => (isUserCodeModalOpen = false)}
-					class="absolute top-2 right-2 p-1.5 border-2 border-black bg-white hover:bg-neutral-100 text-black cursor-pointer z-10"
-					aria-label="Zavřít"
-				>
-					<X class="w-5 h-5" />
-				</button>
-
 				<!-- High-contrast Data Matrix Canvas -->
-				<div class="bg-white p-2">
+				<div class="bg-white">
 					<canvas bind:this={modalCodeCanvas} class="w-64 h-64 sm:w-72 sm:h-72"></canvas>
 				</div>
 			</div>
