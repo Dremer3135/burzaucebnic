@@ -355,11 +355,27 @@
 							continue;
 						}
 
-						// 3. What if it's an available book cached or being added?
+						// 3. What if it's a book cached or being added?
 						const cached = codeLookupCache.get(code);
-						if (cached?.type === 'book' && cached.book.status === 'available' && !suppressedBooks.has(code)) {
-							const color = idToColor(cached.book.id);
-							drawPricePolygon(ctx, match.position, `${cached.book.price} Kč`, transform, color);
+						if (cached?.type === 'book' && !suppressedBooks.has(code)) {
+							if (cached.book.status === 'available') {
+								const color = idToColor(cached.book.id);
+								drawPricePolygon(ctx, match.position, `${cached.book.price} Kč`, transform, color);
+							} else if (cached.book.status === 'checkout') {
+								drawPricePolygon(ctx, match.position, 'V REZERVACI', transform, {
+									bg: '#e5e5e5',
+									border: '#000000',
+									text: '#000000',
+									lightBg: '#f5f5f5'
+								});
+							} else if (cached.book.status === 'bought') {
+								drawPricePolygon(ctx, match.position, 'PRODÁNO', transform, {
+									bg: '#f5f5f5',
+									border: '#737373',
+									text: '#737373',
+									lightBg: '#fafafa'
+								});
+							}
 						}
 					}
 				}

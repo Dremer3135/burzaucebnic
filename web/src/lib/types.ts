@@ -29,7 +29,6 @@ export interface Book {
 	price: number;
 	photo: string;
 	status: BookStatus;
-	checkoutExpiresAt?: string;
 	created: string;
 	updated: string;
 	expand?: {

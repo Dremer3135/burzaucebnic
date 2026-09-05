@@ -55,7 +55,6 @@ func main() {
 		}
 
 		registerApiEndpoints(e)
-		startCheckoutReaper(e.App)
 
 		return e.Next()
 	})
@@ -532,12 +531,7 @@ func registerApiEndpoints(e *core.ServeEvent) {
 			return c.BadRequestError("Musíte uvést alespoň jednu knihu.", nil)
 		}
 
-		var expiresAt string
 		err := c.App.RunInTransaction(func(txApp core.App) error {
-			now := time.Now().UTC()
-			expiresTime := now.Add(15 * time.Minute)
-			expiresAt = expiresTime.Format("2006-01-02 15:04:05.000Z")
-
 			for _, bookId := range req.BookIds {
 				book, err := txApp.FindRecordById("books", bookId)
 				if err != nil || book == nil {
@@ -554,7 +548,6 @@ func registerApiEndpoints(e *core.ServeEvent) {
 
 				book.Set("status", "checkout")
 				book.Set("buyer", authRecord.Id)
-				book.Set("checkoutExpiresAt", expiresAt)
 				if err := txApp.Save(book); err != nil {
 					return fmt.Errorf("chyba při ukládání knihy: %w", err)
 				}
@@ -586,10 +579,9 @@ func registerApiEndpoints(e *core.ServeEvent) {
 		}
 
 		return c.JSON(http.StatusOK, map[string]any{
-			"success":   true,
-			"buyerId":   authRecord.Id,
-			"expiresAt": expiresAt,
-			"count":     len(req.BookIds),
+			"success": true,
+			"buyerId": authRecord.Id,
+			"count":   len(req.BookIds),
 		})
 	}).Bind(apis.RequireAuth("users"))
 
@@ -1225,61 +1217,4 @@ func randomAlphaNum(n int) string {
 		b[i] = letters[v%byte(len(letters))]
 	}
 	return string(b)
-}
-
-// startCheckoutReaper runs every 30 seconds to release expired reservations
-func startCheckoutReaper(app core.App) {
-	go func() {
-		ticker := time.NewTicker(30 * time.Second)
-		defer ticker.Stop()
-
-		for range ticker.C {
-			nowStr := time.Now().UTC().Format("2006-01-02 15:04:05.000Z")
-
-			records, err := app.FindAllRecords("books", dbx.And(
-				dbx.HashExp{"status": "checkout"},
-				dbx.NewExp("checkoutExpiresAt != '' AND checkoutExpiresAt < {:now}", dbx.Params{"now": nowStr}),
-			))
-			if err != nil || len(records) == 0 {
-				continue
-			}
-
-			log.Printf("[REAPER] Found %d expired checkout reservations", len(records))
-			for _, rec := range records {
-				// Don't reap books that have an active pending QR payment
-				var pendingCount int
-				_ = app.DB().Select("count(*)").From("payments").Where(dbx.And(
-					dbx.HashExp{"status": "pending"},
-					dbx.NewExp("books LIKE {:bId}", dbx.Params{"bId": "%" + rec.Id + "%"}),
-				)).Row(&pendingCount)
-
-				if pendingCount > 0 {
-					continue
-				}
-
-				buyerId := rec.GetString("buyer")
-				rec.Set("status", "available")
-				rec.Set("buyer", "")
-				rec.Set("checkoutExpiresAt", "")
-
-				if err := app.Save(rec); err != nil {
-					log.Printf("[REAPER] Error saving book %s: %v", rec.Id, err)
-				}
-
-				if buyerId != "" {
-					if buyer, err := app.FindRecordById("users", buyerId); err == nil {
-						buyIds := buyer.GetStringSlice("buy")
-						newBuyIds := make([]string, 0, len(buyIds))
-						for _, id := range buyIds {
-							if id != rec.Id {
-								newBuyIds = append(newBuyIds, id)
-							}
-						}
-						buyer.Set("buy", newBuyIds)
-						_ = app.Save(buyer)
-					}
-				}
-			}
-		}
-	}()
 }

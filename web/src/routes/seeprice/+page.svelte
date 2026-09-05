@@ -166,14 +166,29 @@
 					vRect.top - cRect.top
 				);
 
-				// Draw live price polygons for all verified books
+				// Draw live status/price polygons for all verified books
 				for (const { match } of trackedMatches.values()) {
 					const code = match.text.trim();
 					const priceInfo = priceStore.get(code);
 
-					// If found and available in database, render solid opaque white polygon with price
 					if (priceInfo) {
-						drawPricePolygon(ctx, match.position, `${priceInfo.price} Kč`, transform);
+						if (priceInfo.status === 'available') {
+							drawPricePolygon(ctx, match.position, `${priceInfo.price} Kč`, transform);
+						} else if (priceInfo.status === 'checkout') {
+							drawPricePolygon(ctx, match.position, 'V REZERVACI', transform, {
+								bg: '#e5e5e5',
+								border: '#000000',
+								text: '#000000',
+								lightBg: '#f5f5f5'
+							});
+						} else if (priceInfo.status === 'bought') {
+							drawPricePolygon(ctx, match.position, 'PRODÁNO', transform, {
+								bg: '#f5f5f5',
+								border: '#737373',
+								text: '#737373',
+								lightBg: '#fafafa'
+							});
+						}
 					}
 					// If null (not found in DB), do NOT draw a polygon
 				}
