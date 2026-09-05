@@ -104,7 +104,7 @@
 			</div>
 		{/if}
 
-		<!-- Right: Logout -->
+		<!-- Right: Logout (when logged in) or "by [logo]" (on login page) -->
 		<div class="flex items-center gap-1.5 shrink-0">
 			{#if auth.user}
 				<button
@@ -119,6 +119,17 @@
 					<LogOut class="w-4 h-4" />
 					<span class="hidden md:inline text-xs font-bold uppercase tracking-wider">ODHLÁSIT</span>
 				</button>
+			{:else}
+				<a
+					href="https://skrat.org"
+					target="_blank"
+					rel="noopener noreferrer"
+					class="flex items-center gap-1.5 text-black hover:opacity-80 transition-opacity select-none py-1"
+					title="SKRAT"
+				>
+					<span class="text-[11px] font-mono text-neutral-400">by</span>
+					<img src="/skrat_logo.svg" alt="SKRAT" class="h-4 sm:h-5 w-auto object-contain block" />
+				</a>
 			{/if}
 		</div>
 	</div>
