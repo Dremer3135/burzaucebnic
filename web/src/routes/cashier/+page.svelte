@@ -126,13 +126,22 @@
 	// ----------------------------------------------------
 	// 5. PAYMENT & FINALIZATION STATE
 	// ----------------------------------------------------
+	interface PreparedCheckout {
+		variableSymbol: number;
+		totalAmount: number;
+		buyer: BuyerInfo;
+		event: AppEvent | null;
+	}
+
 	let paymentMode = $state<'PAYMENT' | 'SUCCESS' | null>(null);
+	let preparedCheckout = $state<PreparedCheckout | null>(null);
 	let activePayment = $state<Payment | null>(null);
 	let activeEvent = $state<AppEvent | null>(null);
 	let qrCanvas = $state<HTMLCanvasElement | null>(null);
 	let isConfirmingPayment = $state(false);
 	let paymentError = $state('');
 	let confirmAction = $state<'CASH' | 'QR' | null>(null);
+	let unsubBooksRealtime: (() => void) | null = null;
 
 	// Pure standard mode gating:
 	// Scanner strictly scans and auto-adds ONLY in pure standard camera view
@@ -162,26 +171,48 @@
 		updateSheetDimensions();
 		window.addEventListener('resize', updateSheetDimensions);
 		startCamera();
+
+		// Subscribe to real-time book updates to keep AR overlay in sync
+		pb.collection('books').subscribe<Book>('*', (e) => {
+			if (e.action === 'update' || e.action === 'create') {
+				const cached = codeLookupCache.get(e.record.id);
+				if (cached && cached.type === 'book') {
+					cached.book = { ...cached.book, ...e.record };
+				} else if (!cached) {
+					codeLookupCache.set(e.record.id, {
+						type: 'book',
+						book: e.record
+					});
+				}
+			}
+		}).then((unsub) => {
+			unsubBooksRealtime = unsub;
+		}).catch((err) => {
+			console.warn('Realtime books subscription failed', err);
+		});
 	});
 
 	onDestroy(() => {
 		if (typeof window !== 'undefined') {
 			window.removeEventListener('resize', updateSheetDimensions);
 		}
+		if (unsubBooksRealtime) {
+			unsubBooksRealtime();
+			unsubBooksRealtime = null;
+		}
 		stopCamera();
 	});
 
 	// Re-render SPAYD QR code whenever entering payment mode
 	$effect(() => {
-		if (paymentMode === 'PAYMENT' && qrCanvas && activePayment) {
-			const ev = activeEvent || eventStore.event;
+		if (paymentMode === 'PAYMENT' && qrCanvas && preparedCheckout) {
+			const ev = preparedCheckout.event || activeEvent || eventStore.event;
 			const iban = ev?.iban || 'CZ6520100000002101234567';
-			const payerEmail = currentBuyer?.email || checkoutEmail.trim() || activePayment.expand?.buyer?.email || '';
+			const payerEmail = currentBuyer?.email || checkoutEmail.trim() || preparedCheckout.buyer.email || '';
 			renderSpaydQRCode(qrCanvas, {
 				iban: iban,
-				amount: activePayment.totalAmount,
-				vs: activePayment.variableSymbol,
-				paymentId: activePayment.id,
+				amount: preparedCheckout.totalAmount,
+				vs: preparedCheckout.variableSymbol,
 				payerEmail: payerEmail
 			}).catch(console.error);
 		}
@@ -362,7 +393,7 @@
 								const color = idToColor(cached.book.id);
 								drawPricePolygon(ctx, match.position, `${cached.book.price} Kč`, transform, color);
 							} else if (cached.book.status === 'checkout') {
-								drawPricePolygon(ctx, match.position, 'V REZERVACI', transform, {
+								drawPricePolygon(ctx, match.position, 'ČEKÁ NA PLATBU', transform, {
 									bg: '#e5e5e5',
 									border: '#000000',
 									text: '#000000',
@@ -687,10 +718,11 @@
 		try {
 			const res = await pb.send<{
 				success: boolean;
-				payment: Payment;
+				variableSymbol: number;
+				totalAmount: number;
 				buyer: BuyerInfo;
 				event: AppEvent;
-			}>('/api/cashier/checkout', {
+			}>('/api/cashier/prepare-checkout', {
 				method: 'POST',
 				body: {
 					email: email,
@@ -700,7 +732,12 @@
 				}
 			});
 
-			activePayment = res.payment;
+			preparedCheckout = {
+				variableSymbol: res.variableSymbol,
+				totalAmount: res.totalAmount,
+				buyer: res.buyer,
+				event: res.event || eventStore.event
+			};
 			activeEvent = res.event || eventStore.event;
 			currentBuyer = res.buyer;
 
@@ -709,34 +746,62 @@
 			paymentMode = 'PAYMENT';
 			paymentError = '';
 		} catch (err: any) {
-			console.error('Checkout failed', err);
-			checkoutError = err?.message || 'Chyba při vytváření platby. Zkontrolujte dostupnost knih.';
+			console.error('Checkout preparation failed', err);
+			checkoutError = err?.message || 'Chyba při přípravě platby. Zkontrolujte dostupnost knih.';
 		} finally {
 			isSubmittingCheckout = false;
 		}
 	}
 
 	// ----------------------------------------------------
-	// PAYMENT CONFIRMATION
+	// PAYMENT CONFIRMATION & FINALIZATION
 	// ----------------------------------------------------
 	async function handleConfirmCash() {
-		if (!activePayment) return;
+		if (!preparedCheckout) return;
 		isConfirmingPayment = true;
 		paymentError = '';
 
 		try {
-			await pb.send('/api/cashier/confirm-payment', {
+			const res = await pb.send<{ success: boolean; payment: Payment }>('/api/cashier/finalize-checkout', {
 				method: 'POST',
 				body: {
-					paymentId: activePayment.id,
-					method: 'cash'
+					method: 'cash',
+					buyerId: preparedCheckout.buyer.id,
+					bookIds: cartBooks.map((b) => b.id),
+					variableSymbol: preparedCheckout.variableSymbol
 				}
 			});
 
+			activePayment = res.payment;
 			paymentMode = 'SUCCESS';
 		} catch (err: any) {
 			console.error('Failed to confirm cash payment', err);
 			paymentError = err?.message || 'Chyba při potvrzení hotovostní platby.';
+		} finally {
+			isConfirmingPayment = false;
+		}
+	}
+
+	async function handleConfirmQR() {
+		if (!preparedCheckout) return;
+		isConfirmingPayment = true;
+		paymentError = '';
+
+		try {
+			await pb.send('/api/cashier/finalize-checkout', {
+				method: 'POST',
+				body: {
+					method: 'qr',
+					buyerId: preparedCheckout.buyer.id,
+					bookIds: cartBooks.map((b) => b.id),
+					variableSymbol: preparedCheckout.variableSymbol
+				}
+			});
+
+			resetForNextCustomer();
+		} catch (err: any) {
+			console.error('Failed to finalize QR payment', err);
+			paymentError = err?.message || 'Chyba při dokončení QR platby.';
 		} finally {
 			isConfirmingPayment = false;
 		}
@@ -747,6 +812,7 @@
 		currentBuyer = null;
 		suppressedBooks.clear();
 		codeLookupCache.clear();
+		preparedCheckout = null;
 		activePayment = null;
 		paymentMode = null;
 		paymentError = '';
@@ -1248,24 +1314,39 @@
 	<!-- ---------------------------------------------------------------- -->
 	<!-- PAYMENT FINALIZATION VIEW (SPAYD QR & CASH CONFIRMATION)          -->
 	<!-- ---------------------------------------------------------------- -->
-	{#if paymentMode === 'PAYMENT' && activePayment}
+	{#if paymentMode === 'PAYMENT' && preparedCheckout}
 		<div class="absolute inset-0 bg-white z-40 p-4 flex flex-col justify-between max-w-sm mx-auto text-black select-none overflow-y-auto">
 			<!-- Compact Header: Amount & Variable Symbol -->
 			<div class="border-b-2 border-black pb-2.5 pt-1">
 				<div class="flex items-baseline justify-between">
 					<div>
 						<span class="text-[10px] font-mono font-bold text-neutral-500 uppercase block">Částka</span>
-						<span class="text-3xl font-black text-black leading-none">{activePayment.totalAmount} Kč</span>
+						<span class="text-3xl font-black text-black leading-none">{preparedCheckout.totalAmount} Kč</span>
 					</div>
-					<div class="text-right">
-						<span class="text-[10px] font-mono font-bold text-neutral-500 uppercase block">Var. symbol</span>
-						<span class="font-mono text-xl font-black text-black leading-none">{activePayment.variableSymbol}</span>
+					<div class="text-right flex items-center gap-3">
+						<div>
+							<span class="text-[10px] font-mono font-bold text-neutral-500 uppercase block">Var. symbol</span>
+							<span class="font-mono text-xl font-black text-black leading-none">{preparedCheckout.variableSymbol}</span>
+						</div>
+						<button
+							type="button"
+							onclick={() => {
+								paymentMode = null;
+								paymentError = '';
+							}}
+							class="p-1.5 border-2 border-black bg-white hover:bg-neutral-100 text-black cursor-pointer active:scale-95"
+							title="Zpět do košíku"
+							aria-label="Zpět do košíku"
+						>
+							<X class="w-4 h-4" />
+						</button>
 					</div>
 				</div>
-				{#if currentBuyer}
+				{#if currentBuyer || preparedCheckout.buyer}
+					{@const buyer = currentBuyer || preparedCheckout.buyer}
 					<div class="text-[11px] font-bold text-neutral-600 truncate mt-1.5 flex items-center gap-1.5">
 						<span class="text-neutral-400 font-normal">Kupující:</span>
-						<span class="text-black font-mono font-bold truncate">{currentBuyer.name ? `${currentBuyer.name} (${currentBuyer.email})` : currentBuyer.email}</span>
+						<span class="text-black font-mono font-bold truncate">{buyer.name ? `${buyer.name} (${buyer.email})` : buyer.email}</span>
 					</div>
 				{/if}
 			</div>
@@ -1291,9 +1372,9 @@
 					type="button"
 					onclick={() => (confirmAction = 'CASH')}
 					disabled={isConfirmingPayment}
-					class="w-full py-3.5 px-4 bg-black hover:bg-neutral-800 text-white font-black text-sm uppercase tracking-wider border-2 border-black flex items-center justify-center gap-2 cursor-pointer active:scale-98 transition-transform"
+					class="w-full py-3.5 px-4 bg-black hover:bg-neutral-800 text-white font-black text-sm uppercase tracking-wider border-2 border-black flex items-center justify-center gap-2 cursor-pointer active:scale-98 transition-transform disabled:opacity-50"
 				>
-					{#if isConfirmingPayment}
+					{#if isConfirmingPayment && confirmAction === 'CASH'}
 						<RefreshCw class="w-4 h-4 animate-spin" />
 					{:else}
 						<Banknote class="w-4 h-4" />
@@ -1305,9 +1386,14 @@
 				<button
 					type="button"
 					onclick={() => (confirmAction = 'QR')}
-					class="w-full py-2.5 px-4 bg-white hover:bg-neutral-100 text-black font-black text-xs uppercase tracking-wider border-2 border-black flex items-center justify-center gap-1.5 cursor-pointer active:scale-98 transition-transform"
+					disabled={isConfirmingPayment}
+					class="w-full py-2.5 px-4 bg-white hover:bg-neutral-100 text-black font-black text-xs uppercase tracking-wider border-2 border-black flex items-center justify-center gap-1.5 cursor-pointer active:scale-98 transition-transform disabled:opacity-50"
 				>
-					<Receipt class="w-4 h-4" />
+					{#if isConfirmingPayment && confirmAction === 'QR'}
+						<RefreshCw class="w-4 h-4 animate-spin" />
+					{:else}
+						<Receipt class="w-4 h-4" />
+					{/if}
 					<span>Zaplatí přes QR</span>
 				</button>
 			</div>
@@ -1323,12 +1409,13 @@
 						</div>
 						<h3 class="text-base font-black uppercase mb-1">Potvrdit platbu hotově?</h3>
 						<p class="text-xs text-neutral-600 font-bold mb-4">
-							Opravdu bylo přijato <span class="text-black font-black">{activePayment.totalAmount} Kč</span> v hotovosti?
+							Opravdu bylo přijato <span class="text-black font-black">{preparedCheckout.totalAmount} Kč</span> v hotovosti?
 						</p>
 						<div class="flex gap-2">
 							<button
 								type="button"
 								onclick={() => (confirmAction = null)}
+								disabled={isConfirmingPayment}
 								class="flex-1 py-2.5 bg-white hover:bg-neutral-100 text-black text-xs font-black uppercase tracking-wider border-2 border-black cursor-pointer"
 							>
 								ZRUŠIT
@@ -1336,12 +1423,17 @@
 							<button
 								type="button"
 								onclick={() => {
+									const act = confirmAction;
 									confirmAction = null;
-									handleConfirmCash();
+									if (act === 'CASH') handleConfirmCash();
 								}}
-								class="flex-1 py-2.5 bg-black hover:bg-neutral-800 text-white text-xs font-black uppercase tracking-wider border-2 border-black cursor-pointer"
+								disabled={isConfirmingPayment}
+								class="flex-1 py-2.5 bg-black hover:bg-neutral-800 text-white text-xs font-black uppercase tracking-wider border-2 border-black cursor-pointer flex items-center justify-center gap-1.5"
 							>
-								POTVRDIT
+								{#if isConfirmingPayment}
+									<RefreshCw class="w-3.5 h-3.5 animate-spin" />
+								{/if}
+								<span>POTVRDIT</span>
 							</button>
 						</div>
 					{:else if confirmAction === 'QR'}
@@ -1356,6 +1448,7 @@
 							<button
 								type="button"
 								onclick={() => (confirmAction = null)}
+								disabled={isConfirmingPayment}
 								class="flex-1 py-2.5 bg-white hover:bg-neutral-100 text-black text-xs font-black uppercase tracking-wider border-2 border-black cursor-pointer"
 							>
 								ZRUŠIT
@@ -1363,12 +1456,17 @@
 							<button
 								type="button"
 								onclick={() => {
+									const act = confirmAction;
 									confirmAction = null;
-									resetForNextCustomer();
+									if (act === 'QR') handleConfirmQR();
 								}}
-								class="flex-1 py-2.5 bg-black hover:bg-neutral-800 text-white text-xs font-black uppercase tracking-wider border-2 border-black cursor-pointer"
+								disabled={isConfirmingPayment}
+								class="flex-1 py-2.5 bg-black hover:bg-neutral-800 text-white text-xs font-black uppercase tracking-wider border-2 border-black cursor-pointer flex items-center justify-center gap-1.5"
 							>
-								POTVRDIT
+								{#if isConfirmingPayment}
+									<RefreshCw class="w-3.5 h-3.5 animate-spin" />
+								{/if}
+								<span>POTVRDIT</span>
 							</button>
 						</div>
 					{/if}

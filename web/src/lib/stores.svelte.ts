@@ -331,6 +331,31 @@ export interface CachedPrice {
 class PriceStore {
 	private cache = new Map<string, CachedPrice | null>();
 	private inFlight = new Map<string, Promise<CachedPrice | null>>();
+	private unsub: (() => void) | null = null;
+
+	constructor() {
+		if (typeof window !== 'undefined') {
+			this.subscribe();
+		}
+	}
+
+	private async subscribe() {
+		try {
+			this.unsub = await pb.collection('books').subscribe<Book>('*', (e) => {
+				if (e.action === 'create' || e.action === 'update') {
+					this.cache.set(e.record.id, {
+						id: e.record.id,
+						price: e.record.price,
+						status: e.record.status
+					});
+				} else if (e.action === 'delete') {
+					this.cache.set(e.record.id, null);
+				}
+			});
+		} catch (err) {
+			console.warn('Could not subscribe to books in PriceStore', err);
+		}
+	}
 
 	get(id: string): CachedPrice | null | undefined {
 		return this.cache.get(id);

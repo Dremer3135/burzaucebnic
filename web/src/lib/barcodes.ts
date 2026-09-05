@@ -21,7 +21,7 @@ export interface SpaydParams {
 	iban: string;
 	amount: number;
 	vs: number;
-	paymentId: string;
+	paymentId?: string;
 	currency?: string;
 	payerEmail?: string;
 }
@@ -31,7 +31,7 @@ export function formatSpaydString(params: SpaydParams): string {
 	const amountClean = params.amount.toFixed(2);
 	const currency = params.currency || 'CZK';
 
-	let rawMsg = params.paymentId || '';
+	let rawMsg = params.paymentId || String(params.vs);
 	if (params.payerEmail && params.payerEmail.trim()) {
 		const email = params.payerEmail.trim();
 		rawMsg = rawMsg ? `${rawMsg} ${email}` : email;

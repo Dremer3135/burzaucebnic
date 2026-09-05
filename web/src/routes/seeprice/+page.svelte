@@ -175,7 +175,7 @@
 						if (priceInfo.status === 'available') {
 							drawPricePolygon(ctx, match.position, `${priceInfo.price} Kč`, transform);
 						} else if (priceInfo.status === 'checkout') {
-							drawPricePolygon(ctx, match.position, 'V REZERVACI', transform, {
+							drawPricePolygon(ctx, match.position, 'ČEKÁ NA PLATBU', transform, {
 								bg: '#e5e5e5',
 								border: '#000000',
 								text: '#000000',

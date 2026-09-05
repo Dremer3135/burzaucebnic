@@ -27,6 +27,20 @@ import (
 )
 
 var vsLock sync.Mutex
+var lastAllocatedVS int = 0
+
+func getNextVariableSymbol(app core.App) int {
+	vsLock.Lock()
+	defer vsLock.Unlock()
+
+	var dbMax int
+	_ = app.DB().Select("COALESCE(MAX(variableSymbol), 10000)").From("payments").Row(&dbMax)
+	if dbMax > lastAllocatedVS {
+		lastAllocatedVS = dbMax
+	}
+	lastAllocatedVS++
+	return lastAllocatedVS
+}
 
 func main() {
 	app := pocketbase.New()
@@ -754,26 +768,26 @@ func registerApiEndpoints(e *core.ServeEvent) {
 				}
 				totalAmount += b.GetFloat("price")
 				b.Set("status", "bought")
-				b.Set("checkoutExpiresAt", "")
 				if err := txApp.Save(b); err != nil {
 					return fmt.Errorf("chyba při změně stavu knihy: %w", err)
 				}
 			}
 
-			// Clean buyer buy relation
+			// Ensure books are linked to buyer's buy relation permanently
 			if buyer, err := txApp.FindRecordById("users", req.BuyerId); err == nil {
-				cleared := make(map[string]bool)
-				for _, id := range req.BookIds {
-					cleared[id] = true
+				existingBuy := buyer.GetStringSlice("buy")
+				buyMap := make(map[string]bool)
+				for _, b := range existingBuy {
+					buyMap[b] = true
 				}
-				currentBuy := buyer.GetStringSlice("buy")
-				newBuy := make([]string, 0, len(currentBuy))
-				for _, id := range currentBuy {
-					if !cleared[id] {
-						newBuy = append(newBuy, id)
-					}
+				for _, b := range req.BookIds {
+					buyMap[b] = true
 				}
-				buyer.Set("buy", newBuy)
+				updatedBuy := make([]string, 0, len(buyMap))
+				for b := range buyMap {
+					updatedBuy = append(updatedBuy, b)
+				}
+				buyer.Set("buy", updatedBuy)
 				_ = txApp.Save(buyer)
 			}
 
@@ -922,28 +936,11 @@ func registerApiEndpoints(e *core.ServeEvent) {
 				b, err := txApp.FindRecordById("books", bookId)
 				if err == nil && b != nil {
 					b.Set("status", "bought")
-					b.Set("checkoutExpiresAt", "")
 					_ = txApp.Save(b)
 				}
 			}
 
-			// Clean buyer's buy relation
-			buyerId := payment.GetString("buyer")
-			if buyer, err := txApp.FindRecordById("users", buyerId); err == nil {
-				cleared := make(map[string]bool)
-				for _, id := range bookIds {
-					cleared[id] = true
-				}
-				currentBuy := buyer.GetStringSlice("buy")
-				newBuy := make([]string, 0, len(currentBuy))
-				for _, id := range currentBuy {
-					if !cleared[id] {
-						newBuy = append(newBuy, id)
-					}
-				}
-				buyer.Set("buy", newBuy)
-				_ = txApp.Save(buyer)
-			}
+			// Note: Books stay in buyer's buy relation permanently
 
 			payment.Set("status", "completed")
 			if req.Method != "" {
@@ -1052,8 +1049,8 @@ func registerApiEndpoints(e *core.ServeEvent) {
 		})
 	}).Bind(apis.RequireAuth("users"))
 
-	// POST /api/cashier/checkout - Cashier checkout: resolve/create buyer, reserve books, create pending payment with VS
-	e.Router.POST("/api/cashier/checkout", func(c *core.RequestEvent) error {
+	// POST /api/cashier/prepare-checkout - Validate books, resolve/create buyer, allocate VS without reserving yet
+	e.Router.POST("/api/cashier/prepare-checkout", func(c *core.RequestEvent) error {
 		authRecord := c.Auth
 		if authRecord == nil || !authRecord.GetBool("isCashier") {
 			return c.ForbiddenError("Pouze pokladní má přístup k této funkci.", nil)
@@ -1075,9 +1072,7 @@ func registerApiEndpoints(e *core.ServeEvent) {
 			return c.BadRequestError("Musíte uvést email nebo ID kupujícího.", nil)
 		}
 
-		var createdPayment *core.Record
 		var buyerUser *core.Record
-
 		err := c.App.RunInTransaction(func(txApp core.App) error {
 			// 1. Locate or create buyer
 			if req.BuyerId != "" {
@@ -1087,7 +1082,6 @@ func registerApiEndpoints(e *core.ServeEvent) {
 				buyerUser, _ = txApp.FindAuthRecordByEmail("users", req.Email)
 			}
 			if buyerUser == nil {
-				// Auto-create user
 				usersColl, err := txApp.FindCollectionByNameOrId("users")
 				if err != nil {
 					return fmt.Errorf("kolekce users nenalezena: %w", err)
@@ -1117,16 +1111,82 @@ func registerApiEndpoints(e *core.ServeEvent) {
 				}
 			}
 
-			// 2. Lock VS and compute next sequential VS
-			vsLock.Lock()
-			defer vsLock.Unlock()
+			// 2. Verify all books are available (DO NOT change status yet)
+			for _, bookId := range req.BookIds {
+				b, err := txApp.FindRecordById("books", bookId)
+				if err != nil || b == nil {
+					return c.NotFoundError(fmt.Sprintf("Kniha s ID '%s' nebyla nalezena.", bookId), nil)
+				}
+				status := b.GetString("status")
+				if status != "available" {
+					return router.NewApiError(http.StatusConflict, fmt.Sprintf("Kniha '%s' již není dostupná (stav: %s).", b.Id, status), nil)
+				}
+			}
+			return nil
+		})
 
-			var maxVS int
-			_ = txApp.DB().Select("COALESCE(MAX(variableSymbol), 10000)").From("payments").Row(&maxVS)
-			nextVS := maxVS + 1
+		if err != nil {
+			return err
+		}
 
-			// 3. Verify books and update to checkout
+		var totalAmount float64
+		for _, bookId := range req.BookIds {
+			if b, err := c.App.FindRecordById("books", bookId); err == nil && b != nil {
+				totalAmount += b.GetFloat("price")
+			}
+		}
+
+		nextVS := getNextVariableSymbol(c.App)
+		activeEvent, _ := c.App.FindFirstRecordByData("events", "active", true)
+
+		return c.JSON(http.StatusOK, map[string]any{
+			"success":        true,
+			"variableSymbol": nextVS,
+			"totalAmount":    totalAmount,
+			"buyer": map[string]any{
+				"id":    buyerUser.Id,
+				"name":  buyerUser.GetString("name"),
+				"email": buyerUser.GetString("email"),
+			},
+			"event": activeEvent,
+		})
+	}).Bind(apis.RequireAuth("users"))
+
+	// POST /api/cashier/finalize-checkout - Finalize checkout: cash (already paid) or qr (pending/checkout)
+	e.Router.POST("/api/cashier/finalize-checkout", func(c *core.RequestEvent) error {
+		authRecord := c.Auth
+		if authRecord == nil || !authRecord.GetBool("isCashier") {
+			return c.ForbiddenError("Pouze pokladní má přístup k této funkci.", nil)
+		}
+
+		var req struct {
+			Method         string   `json:"method"` // "cash" or "qr"
+			BuyerId        string   `json:"buyerId"`
+			BookIds        []string `json:"bookIds"`
+			VariableSymbol int      `json:"variableSymbol"`
+		}
+		if err := c.BindBody(&req); err != nil || req.BuyerId == "" || len(req.BookIds) == 0 {
+			return c.BadRequestError("Chybí buyerId nebo seznam knih.", nil)
+		}
+		if req.Method != "cash" && req.Method != "qr" {
+			return c.BadRequestError("Metoda platby musí být 'cash' nebo 'qr'.", nil)
+		}
+
+		var createdPayment *core.Record
+		err := c.App.RunInTransaction(func(txApp core.App) error {
+			buyerUser, err := txApp.FindRecordById("users", req.BuyerId)
+			if err != nil || buyerUser == nil {
+				return c.NotFoundError("Kupující nebyl nalezen.", nil)
+			}
+
 			var totalAmount float64
+			targetBookStatus := "checkout"
+			paymentStatus := "pending"
+			if req.Method == "cash" {
+				targetBookStatus = "bought"
+				paymentStatus = "completed"
+			}
+
 			for _, bookId := range req.BookIds {
 				b, err := txApp.FindRecordById("books", bookId)
 				if err != nil || b == nil {
@@ -1135,20 +1195,19 @@ func registerApiEndpoints(e *core.ServeEvent) {
 
 				status := b.GetString("status")
 				currentBuyer := b.GetString("buyer")
-				if status != "available" && !(status == "checkout" && currentBuyer == buyerUser.Id) {
+				if status != "available" && !(status == targetBookStatus && currentBuyer == buyerUser.Id) {
 					return router.NewApiError(http.StatusConflict, fmt.Sprintf("Kniha '%s' již není dostupná (stav: %s).", b.Id, status), nil)
 				}
 
 				totalAmount += b.GetFloat("price")
-				b.Set("status", "checkout")
+				b.Set("status", targetBookStatus)
 				b.Set("buyer", buyerUser.Id)
-				b.Set("checkoutExpiresAt", "")
 				if err := txApp.Save(b); err != nil {
 					return fmt.Errorf("chyba při ukládání knihy: %w", err)
 				}
 			}
 
-			// 4. Update buyer's buy relation
+			// Link books into buyer's buy relation and stay there
 			existingBuy := buyerUser.GetStringSlice("buy")
 			buyMap := make(map[string]bool)
 			for _, b := range existingBuy {
@@ -1166,19 +1225,23 @@ func registerApiEndpoints(e *core.ServeEvent) {
 				return fmt.Errorf("chyba při aktualizaci uživatele: %w", err)
 			}
 
-			// 5. Create payment record
+			vs := req.VariableSymbol
+			if vs <= 0 {
+				vs = getNextVariableSymbol(txApp)
+			}
+
 			paymentsColl, err := txApp.FindCollectionByNameOrId("payments")
 			if err != nil {
 				return err
 			}
 
 			createdPayment = core.NewRecord(paymentsColl)
-			createdPayment.Set("variableSymbol", nextVS)
+			createdPayment.Set("variableSymbol", vs)
 			createdPayment.Set("buyer", buyerUser.Id)
 			createdPayment.Set("books", req.BookIds)
 			createdPayment.Set("totalAmount", totalAmount)
-			createdPayment.Set("method", "qr")
-			createdPayment.Set("status", "pending")
+			createdPayment.Set("method", req.Method)
+			createdPayment.Set("status", paymentStatus)
 			createdPayment.Set("cashier", authRecord.Id)
 
 			if err := txApp.Save(createdPayment); err != nil {
@@ -1192,17 +1255,9 @@ func registerApiEndpoints(e *core.ServeEvent) {
 			return err
 		}
 
-		activeEvent, _ := c.App.FindFirstRecordByData("events", "active", true)
-
 		return c.JSON(http.StatusOK, map[string]any{
 			"success": true,
 			"payment": createdPayment,
-			"buyer": map[string]any{
-				"id":    buyerUser.Id,
-				"name":  buyerUser.GetString("name"),
-				"email": buyerUser.GetString("email"),
-			},
-			"event": activeEvent,
 		})
 	}).Bind(apis.RequireAuth("users"))
 }

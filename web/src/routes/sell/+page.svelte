@@ -414,7 +414,7 @@
 			case 'available':
 				return { label: 'K PRODEJI', cls: 'bg-black text-white border-black' };
 			case 'checkout':
-				return { label: 'V REZERVACI', cls: 'bg-neutral-200 text-black border-black' };
+				return { label: 'ČEKÁ NA PLATBU', cls: 'bg-neutral-200 text-black border-black' };
 			case 'bought':
 				return { label: 'PRODÁNO', cls: 'bg-white text-neutral-400 border-neutral-300 line-through' };
 			default:
