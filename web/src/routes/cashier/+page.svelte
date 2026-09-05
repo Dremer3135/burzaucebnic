@@ -176,11 +176,13 @@
 		if (paymentMode === 'PAYMENT' && qrCanvas && activePayment) {
 			const ev = activeEvent || eventStore.event;
 			const iban = ev?.iban || 'CZ6520100000002101234567';
+			const payerEmail = currentBuyer?.email || checkoutEmail.trim() || activePayment.expand?.buyer?.email || '';
 			renderSpaydQRCode(qrCanvas, {
 				iban: iban,
 				amount: activePayment.totalAmount,
 				vs: activePayment.variableSymbol,
-				paymentId: activePayment.id
+				paymentId: activePayment.id,
+				payerEmail: payerEmail
 			}).catch(console.error);
 		}
 	});

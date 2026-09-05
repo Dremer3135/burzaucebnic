@@ -17,9 +17,9 @@
 	let activeTab = $state<'pending' | 'completed'>('pending');
 	let searchQuery = $state('');
 	let confirmingPaymentId = $state<string | null>(null);
+	let paymentToConfirm = $state<Payment | null>(null);
 	let errorMessage = $state('');
-
-
+	let modalError = $state('');
 
 	$effect(() => {
 		if (auth.isCashier) {
@@ -53,6 +53,7 @@
 
 	async function handleConfirmPayment(payment: Payment) {
 		confirmingPaymentId = payment.id;
+		modalError = '';
 		errorMessage = '';
 		try {
 			await pb.send('/api/cashier/confirm-payment', {
@@ -63,9 +64,12 @@
 			cashierPayments.payments = cashierPayments.payments.map((p) =>
 				p.id === payment.id ? { ...p, status: 'completed' } : p
 			);
+			paymentToConfirm = null;
 		} catch (err: any) {
 			console.error('Failed to confirm payment', err);
-			errorMessage = err?.message || 'Chyba při potvrzení platby.';
+			const msg = err?.message || 'Chyba při potvrzení platby.';
+			modalError = msg;
+			errorMessage = msg;
 		} finally {
 			confirmingPaymentId = null;
 		}
@@ -186,7 +190,10 @@
 						<!-- Action for pending payments -->
 						{#if payment.status === 'pending'}
 							<button
-								onclick={() => handleConfirmPayment(payment)}
+								onclick={() => {
+									paymentToConfirm = payment;
+									modalError = '';
+								}}
 								disabled={confirmingPaymentId === payment.id}
 								class="py-1.5 px-3 bg-black text-white hover:bg-neutral-800 active:bg-neutral-900 font-black text-xs uppercase tracking-wider border-2 border-black transition-all flex items-center justify-center gap-1 cursor-pointer shrink-0 disabled:opacity-50"
 							>
@@ -207,6 +214,82 @@
 					</div>
 				</div>
 			{/each}
+		</div>
+	{/if}
+
+	<!-- Confirmation Popup for Submitting/Confirming Payments -->
+	{#if paymentToConfirm}
+		<div class="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
+			<div class="w-full max-w-sm bg-white border-4 border-black p-5 shadow-[6px_6px_0px_0px_rgba(0,0,0,1)] text-center text-black">
+				<div class="inline-flex p-3 bg-neutral-100 border-2 border-black mb-3">
+					<CheckCircle2 class="w-8 h-8 text-black" />
+				</div>
+				<h3 class="text-base font-black uppercase mb-1">Potvrdit přijetí platby?</h3>
+
+				<div class="my-3 p-2.5 bg-neutral-50 border-2 border-black text-left font-mono text-xs space-y-1.5">
+					<div class="flex justify-between items-baseline border-b border-neutral-200 pb-1">
+						<span class="font-sans font-black text-neutral-500 uppercase text-[10px]">Částka:</span>
+						<span class="font-sans font-black text-black text-base">{paymentToConfirm.totalAmount} Kč</span>
+					</div>
+					<div class="flex justify-between items-baseline border-b border-neutral-200 pb-1">
+						<span class="font-sans font-black text-neutral-500 uppercase text-[10px]">Var. symbol:</span>
+						<span class="font-black text-black text-sm">{paymentToConfirm.variableSymbol}</span>
+					</div>
+					{#if paymentToConfirm.expand?.buyer}
+						<div class="flex justify-between items-baseline border-b border-neutral-200 pb-1">
+							<span class="font-sans font-black text-neutral-500 uppercase text-[10px]">Kupující:</span>
+							<span class="font-sans font-bold text-black text-[11px] truncate max-w-[170px]">
+								{paymentToConfirm.expand.buyer.name || paymentToConfirm.expand.buyer.email}
+							</span>
+						</div>
+					{/if}
+					<div class="flex justify-between items-baseline">
+						<span class="font-sans font-black text-neutral-500 uppercase text-[10px]">Knihy:</span>
+						<span class="font-sans font-bold text-black text-[11px]">
+							{paymentToConfirm.books.length} {paymentToConfirm.books.length === 1 ? 'kniha' : paymentToConfirm.books.length >= 2 && paymentToConfirm.books.length <= 4 ? 'knihy' : 'knih'}
+						</span>
+					</div>
+				</div>
+
+				{#if modalError}
+					<div class="mb-3 p-2 bg-red-50 border-2 border-red-600 text-red-700 text-xs font-bold flex items-center gap-1.5 text-left">
+						<AlertCircle class="w-4 h-4 shrink-0 text-red-600" />
+						<span>{modalError}</span>
+					</div>
+				{/if}
+
+				<p class="text-xs text-neutral-600 font-bold mb-4">
+					Opravdu byla tato platba připsána na účet? Knihy budou označeny jako prodané.
+				</p>
+
+				<div class="flex gap-2">
+					<button
+						type="button"
+						onclick={() => (paymentToConfirm = null)}
+						disabled={confirmingPaymentId !== null}
+						class="flex-1 py-2.5 bg-white hover:bg-neutral-100 text-black text-xs font-black uppercase tracking-wider border-2 border-black cursor-pointer disabled:opacity-50"
+					>
+						ZRUŠIT
+					</button>
+					<button
+						type="button"
+						onclick={() => {
+							if (paymentToConfirm) {
+								handleConfirmPayment(paymentToConfirm);
+							}
+						}}
+						disabled={confirmingPaymentId !== null}
+						class="flex-1 py-2.5 bg-black hover:bg-neutral-800 text-white text-xs font-black uppercase tracking-wider border-2 border-black cursor-pointer flex items-center justify-center gap-1.5 disabled:opacity-50"
+					>
+						{#if confirmingPaymentId === paymentToConfirm.id}
+							<RefreshCw class="w-3.5 h-3.5 animate-spin" />
+							<span>POTVRZUJI...</span>
+						{:else}
+							<span>POTVRDIT</span>
+						{/if}
+					</button>
+				</div>
+			</div>
 		</div>
 	{/if}
 </div>
