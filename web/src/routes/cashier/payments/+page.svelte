@@ -1,7 +1,8 @@
 <script lang="ts">
 	import { onDestroy } from 'svelte';
-	import { auth, cashierPayments } from '$lib/stores.svelte';
+	import { auth, cashierPayments, eventStore } from '$lib/stores.svelte';
 	import { pb } from '$lib/pocketbase';
+	import { renderSpaydQRCode } from '$lib/barcodes';
 	import {
 		Receipt,
 		CheckCircle2,
@@ -10,7 +11,8 @@
 		BookOpen,
 		RefreshCw,
 		Check,
-		AlertCircle
+		AlertCircle,
+		X
 	} from '@lucide/svelte';
 	import type { Payment } from '$lib/types';
 
@@ -18,6 +20,8 @@
 	let searchQuery = $state('');
 	let confirmingPaymentId = $state<string | null>(null);
 	let paymentToConfirm = $state<Payment | null>(null);
+	let selectedQrPayment = $state<Payment | null>(null);
+	let qrModalCanvas = $state<HTMLCanvasElement | null>(null);
 	let errorMessage = $state('');
 	let modalError = $state('');
 
@@ -29,6 +33,21 @@
 
 	onDestroy(() => {
 		cashierPayments.cleanup();
+	});
+
+	$effect(() => {
+		if (selectedQrPayment && qrModalCanvas) {
+			const ev = eventStore.event;
+			const iban = ev?.iban || 'CZ6520100000002101234567';
+			const payerEmail = selectedQrPayment.expand?.buyer?.email || '';
+			renderSpaydQRCode(qrModalCanvas, {
+				iban: iban,
+				amount: selectedQrPayment.totalAmount,
+				vs: selectedQrPayment.variableSymbol,
+				paymentId: selectedQrPayment.id,
+				payerEmail: payerEmail
+			}).catch(console.error);
+		}
 	});
 
 	let filteredPayments = $derived(
@@ -150,7 +169,15 @@
 		<div class="space-y-2.5 flex-1">
 			{#each filteredPayments as payment (payment.id)}
 				<div class="bg-white border-2 border-black p-3 text-black transition-all">
-					<div class="flex items-center justify-between gap-2 pb-2.5 border-b border-black">
+					<!-- Upper row: Clickable to show QR payment modal -->
+					<div
+						role="button"
+						tabindex="0"
+						onclick={() => (selectedQrPayment = payment)}
+						onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') selectedQrPayment = payment; }}
+						class="flex items-center justify-between gap-2 pb-2.5 border-b border-black cursor-pointer hover:bg-neutral-50 active:bg-neutral-100 transition-colors p-1.5 -m-1.5 select-none"
+						title="Kliknutím zobrazit platební QR kód"
+					>
 						<div class="flex items-center gap-2.5 min-w-0">
 							<!-- Variable Symbol -->
 							<div class="bg-neutral-100 border-2 border-black px-2 py-1 text-center shrink-0">
@@ -165,7 +192,7 @@
 									{payment.expand?.buyer?.name || 'Kupující'}
 								</div>
 								<div class="text-[11px] font-mono text-neutral-500 truncate">
-									{payment.expand?.buyer?.email || payment.id}
+									{payment.expand?.buyer?.email || ''}
 								</div>
 							</div>
 						</div>
@@ -287,6 +314,78 @@
 						{:else}
 							<span>POTVRDIT</span>
 						{/if}
+					</button>
+				</div>
+			</div>
+		</div>
+	{/if}
+
+	<!-- QR Payment Modal (Identical layout to checkout, with Close button at bottom) -->
+	{#if selectedQrPayment}
+		<div
+			class="fixed inset-0 bg-black/70 backdrop-blur-xs z-50 flex items-center justify-center p-3 select-none"
+			role="dialog"
+			tabindex="-1"
+			aria-modal="true"
+			onkeydown={(e) => { if (e.key === 'Escape') selectedQrPayment = null; }}
+		>
+			<div
+				class="fixed inset-0"
+				onclick={() => (selectedQrPayment = null)}
+				role="presentation"
+			></div>
+
+			<div class="bg-white border-4 border-black p-4 flex flex-col justify-between max-w-sm w-full relative z-10 text-black shadow-[8px_8px_0px_0px_rgba(0,0,0,1)] max-h-[92vh] overflow-y-auto">
+				<!-- Compact Header: Amount & Variable Symbol -->
+				<div class="border-b-2 border-black pb-2.5 pt-1">
+					<div class="flex items-baseline justify-between">
+						<div>
+							<span class="text-[10px] font-mono font-bold text-neutral-500 uppercase block">Částka</span>
+							<span class="text-3xl font-black text-black leading-none">{selectedQrPayment.totalAmount} Kč</span>
+						</div>
+						<div class="text-right flex items-center gap-3">
+							<div>
+								<span class="text-[10px] font-mono font-bold text-neutral-500 uppercase block">Var. symbol</span>
+								<span class="font-mono text-xl font-black text-black leading-none">{selectedQrPayment.variableSymbol}</span>
+							</div>
+							<button
+								type="button"
+								onclick={() => (selectedQrPayment = null)}
+								class="p-1.5 border-2 border-black bg-white hover:bg-neutral-100 text-black cursor-pointer active:scale-95"
+								title="Zavřít"
+								aria-label="Zavřít"
+							>
+								<X class="w-4 h-4" />
+							</button>
+						</div>
+					</div>
+					{#if selectedQrPayment.expand?.buyer}
+						{@const buyer = selectedQrPayment.expand.buyer}
+						<div class="text-[11px] font-bold text-neutral-600 truncate mt-1.5 flex items-center gap-1.5">
+							<span class="text-neutral-400 font-normal">Kupující:</span>
+							<span class="text-black font-mono font-bold truncate">
+								{buyer.name ? `${buyer.name} (${buyer.email || ''})` : buyer.email || ''}
+							</span>
+						</div>
+					{/if}
+				</div>
+
+				<!-- Centered SPAYD QR Canvas -->
+				<div class="flex-1 flex flex-col items-center justify-center py-4 min-h-0">
+					<div class="bg-white p-2 border-2 border-black shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]">
+						<canvas bind:this={qrModalCanvas} class="w-48 h-48 sm:w-56 sm:h-56 max-h-[42vh] max-w-[42vh] aspect-square block"></canvas>
+					</div>
+				</div>
+
+				<!-- Bottom Action: Just Close -->
+				<div class="pt-1 pb-1">
+					<button
+						type="button"
+						onclick={() => (selectedQrPayment = null)}
+						class="w-full py-3.5 px-4 bg-black hover:bg-neutral-800 text-white font-black text-sm uppercase tracking-wider border-2 border-black flex items-center justify-center gap-2 cursor-pointer active:scale-98 transition-transform"
+					>
+						<X class="w-4 h-4" />
+						<span>ZAVŘÍT</span>
 					</button>
 				</div>
 			</div>

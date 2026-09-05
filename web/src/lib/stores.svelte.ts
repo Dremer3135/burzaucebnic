@@ -240,6 +240,54 @@ class CashierPaymentsStore {
 				sort: '-id'
 			});
 			this.payments = res;
+
+			// Ensure buyer emails are resolved even if emailVisibility was false in PB
+			const missingBuyerIds = new Set<string>();
+			for (const p of res) {
+				if (p.buyer && !p.expand?.buyer?.email) {
+					missingBuyerIds.add(p.buyer);
+				}
+			}
+
+			if (missingBuyerIds.size > 0) {
+				const resolved = await Promise.all(
+					Array.from(missingBuyerIds).map(async (id) => {
+						try {
+							const info = await pb.send<{ type: string; user?: { id: string; name: string; email: string } }>(
+								`/api/cashier/lookup-code?code=${encodeURIComponent(id)}`,
+								{ method: 'GET' }
+							);
+							return info?.type === 'user' && info.user ? info.user : null;
+						} catch {
+							return null;
+						}
+					})
+				);
+
+				const userMap = new Map<string, { id: string; name: string; email: string }>();
+				for (const u of resolved) {
+					if (u) userMap.set(u.id, u);
+				}
+
+				if (userMap.size > 0) {
+					this.payments = this.payments.map((p) => {
+						const u = userMap.get(p.buyer);
+						if (u) {
+							const buyerObj = p.expand?.buyer
+								? { ...p.expand.buyer, email: u.email, name: p.expand.buyer.name || u.name }
+								: (u as any);
+							return {
+								...p,
+								expand: {
+									...p.expand,
+									buyer: buyerObj
+								}
+							};
+						}
+						return p;
+					});
+				}
+			}
 		} catch (err) {
 			console.error('Failed to load cashier payments', err);
 		} finally {

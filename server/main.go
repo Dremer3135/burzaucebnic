@@ -335,6 +335,9 @@ func ensureSchema(app core.App) error {
 				return fmt.Errorf("updating users schema: %w", err)
 			}
 		}
+
+		// Ensure emailVisibility is enabled so relation expansions (like payment.buyer) include email
+		_, _ = app.DB().NewQuery("UPDATE users SET emailVisibility = 1").Execute()
 	}
 
 	return nil
@@ -1106,6 +1109,7 @@ func registerApiEndpoints(e *core.ServeEvent) {
 					buyerUser.Set("name", strings.Split(req.Email, "@")[0])
 				}
 				buyerUser.SetVerified(true)
+				buyerUser.Set("emailVisibility", true)
 				if err := txApp.Save(buyerUser); err != nil {
 					return fmt.Errorf("chyba při vytváření účtu kupujícího: %w", err)
 				}
