@@ -21,13 +21,13 @@ export default defineConfig({
 		port: 5173,
 		proxy: {
 			'/api': {
-				target: 'http://127.0.0.1:8090',
+				target: process.env.PB_BACKEND_URL || 'http://127.0.0.1:8090',
 				changeOrigin: true,
 				secure: false,
 				ws: true
 			},
 			'/_': {
-				target: 'http://127.0.0.1:8090',
+				target: process.env.PB_BACKEND_URL || 'http://127.0.0.1:8090',
 				changeOrigin: true,
 				secure: false
 			}

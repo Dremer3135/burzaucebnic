@@ -4,7 +4,7 @@ import type { User } from '$lib/types';
 
 export const handle: Handle = async ({ event, resolve }) => {
 	const pbPort = process.env.PB_PORT || '8090';
-	const pbInternalUrl = process.env.PB_INTERNAL_URL || `http://127.0.0.1:${pbPort}`;
+	const pbInternalUrl = process.env.PB_INTERNAL_URL || process.env.PB_BACKEND_URL || `http://127.0.0.1:${pbPort}`;
 	event.locals.pb = new PocketBase(pbInternalUrl);
 
 	// Load auth state from request cookie

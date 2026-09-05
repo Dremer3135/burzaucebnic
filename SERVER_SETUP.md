@@ -333,3 +333,19 @@ Because Google Sign-In is the sole login method:
   ```bash
   tar -czvf burza_db_backup_$(date +%F).tar.gz /opt/burzaucebnic/server/pb_data
   ```
+
+---
+
+## 5. Developing Locally with Remote Production Backend
+
+You can run the SvelteKit frontend locally on your machine while pointing all API requests and Google authentication directly to the remote server:
+
+```bash
+cd web
+npm run dev:remote
+```
+
+- Your local browser connects to `https://127.0.0.1:5174` (with live hot reload and camera access).
+- Vite's proxy automatically routes `/api/*` and `/_/*` to `https://burza.skrat.org`.
+- Google Sign-In popups and real database records sync in real time against the production PocketBase instance.
+
