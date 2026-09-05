@@ -117,6 +117,11 @@
 	let isSubmittingCheckout = $state(false);
 	let checkoutError = $state('');
 	let searchTimeout: any = null;
+	let isExistingBuyer = $derived(
+		!!currentBuyer &&
+		!!currentBuyer.id &&
+		currentBuyer.email.trim().toLowerCase() === checkoutEmail.trim().toLowerCase()
+	);
 
 	// ----------------------------------------------------
 	// 5. PAYMENT & FINALIZATION STATE
@@ -607,7 +612,11 @@
 	function handleEmailInput() {
 		clearTimeout(searchTimeout);
 
-		const query = checkoutEmail.trim();
+		const query = checkoutEmail.trim().toLowerCase();
+		if (currentBuyer && currentBuyer.email.trim().toLowerCase() !== query) {
+			currentBuyer = null;
+		}
+
 		if (query.length >= 2) {
 			searchTimeout = setTimeout(async () => {
 				isSearchingUsers = true;
@@ -617,6 +626,17 @@
 						{ method: 'GET' }
 					);
 					emailSearchResults = results;
+
+					// If user typed an exact match, automatically recognize them
+					const exact = results.find(
+						(u) => u.email.trim().toLowerCase() === query
+					);
+					if (exact && (!currentBuyer || currentBuyer.id !== exact.id)) {
+						currentBuyer = exact;
+						if (!checkoutName.trim() && exact.name) {
+							checkoutName = exact.name;
+						}
+					}
 				} catch (err) {
 					console.error('Email search error', err);
 				} finally {
@@ -1148,9 +1168,14 @@
 						</div>
 					{/if}
 
-					{#if checkoutEmail && emailSearchResults.length === 0 && !isSearchingUsers}
+					{#if isExistingBuyer}
+						<div class="mt-1 text-[10px] font-bold text-emerald-700 uppercase flex items-center gap-1">
+							<Check class="w-3 h-3 text-emerald-700" />
+							<span>Registrovaný zákazník{currentBuyer?.name ? ` (${currentBuyer.name})` : ''}</span>
+						</div>
+					{:else if checkoutEmail && emailSearchResults.length === 0 && !isSearchingUsers}
 						<div class="mt-1 text-[10px] font-bold text-neutral-500 uppercase">
-							Nový zákazník – účet bude v PocketBase vytvořen automaticky
+							Nový zákazník – účet bude v databázi vytvořen automaticky
 						</div>
 					{/if}
 				</div>
