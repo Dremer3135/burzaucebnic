@@ -260,7 +260,8 @@
 	<!-- Enlarged High-Contrast Buyer ID Modal -->
 	{#if isUserCodeModalOpen && auth.user}
 		<div
-			class="fixed inset-0 bg-black/80 backdrop-blur-xs flex items-start justify-center pt-[18vh] p-4 z-50 select-text"
+			class="fixed inset-0 bg-black/80 backdrop-blur-xs flex items-start justify-center p-4 pt-4 sm:pt-6 z-50 select-text"
+			style="padding-top: max(1rem, env(safe-area-inset-top));"
 			role="dialog"
 			tabindex="-1"
 			aria-modal="true"
