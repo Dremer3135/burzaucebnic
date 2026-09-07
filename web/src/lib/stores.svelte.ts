@@ -14,13 +14,22 @@ class AuthStore {
 		if (typeof window !== 'undefined') {
 			pb.authStore.onChange(() => {
 				const newUser = pb.authStore.model as unknown as User | null;
-				if (this.user?.id !== newUser?.id) {
-					this.user = newUser;
+				const userChanged = this.user?.id !== newUser?.id;
+				this.user = newUser;
+				if (userChanged) {
 					this.setupUserSubscription();
 				}
 			});
 			this.setupUserSubscription();
 		}
+	}
+
+	async updateProfile(data: Partial<User>) {
+		if (!this.user?.id) throw new Error('Not logged in');
+		const updated = await pb.collection('users').update<User>(this.user.id, data);
+		pb.authStore.save(pb.authStore.token, updated as any);
+		this.user = updated;
+		return this.user;
 	}
 
 	private async setupUserSubscription() {

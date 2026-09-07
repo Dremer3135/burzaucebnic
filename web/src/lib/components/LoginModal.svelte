@@ -85,7 +85,7 @@
 			<div class="text-[10px] font-mono font-bold text-neutral-400 uppercase text-center mb-2">
 				[DEV RYCHLÉ PŘIHLÁŠENÍ]
 			</div>
-			<div class="grid grid-cols-3 gap-1.5">
+			<div class="grid grid-cols-2 gap-1.5">
 				<button
 					type="button"
 					onclick={() => quickLogin('seller@burza.cz')}
@@ -106,6 +106,14 @@
 					class="py-1.5 px-1 bg-neutral-100 hover:bg-black hover:text-white border border-black text-black font-black text-[10px] uppercase transition-colors text-center cursor-pointer truncate"
 				>
 					POKLADNÍ
+				</button>
+				<button
+					type="button"
+					onclick={() => quickLogin('novy@burza.cz')}
+					class="py-1.5 px-1 bg-amber-100 hover:bg-black hover:text-white border border-black text-black font-black text-[10px] uppercase transition-colors text-center cursor-pointer truncate"
+					title="Nový uživatel s nedokončeným onboardingem"
+				>
+					NOVÝ (ONBOARDING)
 				</button>
 			</div>
 		</div>

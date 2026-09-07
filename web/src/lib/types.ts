@@ -5,6 +5,9 @@ export interface User {
 	avatar?: string;
 	isCashier?: boolean;
 	buy?: string[];
+	payoutToBank?: boolean;
+	iban?: string;
+	onboardingComplete?: boolean;
 	created: string;
 	updated: string;
 }

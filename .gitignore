@@ -2,6 +2,7 @@
 pocketbase
 pocketbase.exe
 pb_data/
+server/burza-server
 
 # Dependencies & Build
 node_modules/

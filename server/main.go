@@ -75,6 +75,31 @@ func main() {
 		return e.Next()
 	})
 
+	// Hook: enforce that non-cashiers / non-superusers cannot modify isCashier status on users
+	// and sanitize onboarding fields (IBAN cleaning, clearing IBAN on opt-out)
+	app.OnRecordUpdateRequest("users").BindFunc(func(e *core.RecordRequestEvent) error {
+		if !e.HasSuperuserAuth() {
+			oldRecord, err := e.App.FindRecordById("users", e.Record.Id)
+			if err == nil && oldRecord != nil {
+				if e.Record.GetBool("isCashier") != oldRecord.GetBool("isCashier") {
+					if e.Auth == nil || !e.Auth.GetBool("isCashier") {
+						return e.ForbiddenError("Pouze administrátor nebo pokladní může měnit oprávnění pokladní.", nil)
+					}
+				}
+			}
+		}
+
+		// Sanitize IBAN and ensure business logic consistency
+		if !e.Record.GetBool("payoutToBank") {
+			e.Record.Set("iban", "")
+		} else if iban := e.Record.GetString("iban"); iban != "" {
+			cleanIban := strings.ToUpper(strings.ReplaceAll(iban, " ", ""))
+			e.Record.Set("iban", cleanIban)
+		}
+
+		return e.Next()
+	})
+
 	// 2. Hook: FFmpeg compression of book photo after upload
 	app.OnRecordAfterCreateSuccess("books").BindFunc(func(e *core.RecordEvent) error {
 		photoName := e.Record.GetString("photo")
@@ -368,6 +393,24 @@ func ensureSchema(app core.App) error {
 			})
 			changed = true
 		}
+		if usersColl.Fields.GetByName("payoutToBank") == nil {
+			usersColl.Fields.Add(&core.BoolField{
+				Name: "payoutToBank",
+			})
+			changed = true
+		}
+		if usersColl.Fields.GetByName("iban") == nil {
+			usersColl.Fields.Add(&core.TextField{
+				Name: "iban",
+			})
+			changed = true
+		}
+		if usersColl.Fields.GetByName("onboardingComplete") == nil {
+			usersColl.Fields.Add(&core.BoolField{
+				Name: "onboardingComplete",
+			})
+			changed = true
+		}
 		if usersColl.ViewRule == nil || *usersColl.ViewRule != "@request.auth.id != ''" {
 			usersColl.ViewRule = types.Pointer("@request.auth.id != ''")
 			usersColl.ListRule = types.Pointer("@request.auth.id != ''")
@@ -375,6 +418,10 @@ func ensureSchema(app core.App) error {
 		}
 		if usersColl.CreateRule == nil || *usersColl.CreateRule != "" {
 			usersColl.CreateRule = types.Pointer("")
+			changed = true
+		}
+		if usersColl.UpdateRule == nil || *usersColl.UpdateRule != "@request.auth.id = id" {
+			usersColl.UpdateRule = types.Pointer("@request.auth.id = id")
 			changed = true
 		}
 		if changed {
@@ -479,6 +526,7 @@ func seedInitialData(app core.App) error {
 		{email: "cashier@burza.cz", username: "cashier", name: "Pokladní Jana", password: "heslo123", isCashier: true},
 		{email: "seller@burza.cz", username: "seller", name: "Prodejce Jan", password: "heslo123", isCashier: false},
 		{email: "buyer@burza.cz", username: "buyer", name: "Kupující Petr", password: "heslo123", isCashier: false},
+		{email: "novy@burza.cz", username: "novy", name: "Nový Uživatel", password: "heslo123", isCashier: false},
 	}
 
 	var sellerUser *core.Record
@@ -492,10 +540,24 @@ func seedInitialData(app core.App) error {
 			user.Set("name", u.name)
 			user.Set("isCashier", u.isCashier)
 			user.SetVerified(true)
+			if u.email == "novy@burza.cz" {
+				user.Set("onboardingComplete", false)
+				user.Set("payoutToBank", true)
+			} else {
+				user.Set("onboardingComplete", true)
+				user.Set("payoutToBank", true)
+			}
 			if err := app.Save(user); err != nil {
 				log.Printf("[SEED] Error creating user %s: %v", u.email, err)
 			} else {
 				log.Printf("[SEED] Created test user %s (isCashier: %v)", u.email, u.isCashier)
+			}
+		} else {
+			// Update existing seeded accounts if onboardingComplete is not set
+			if u.email != "novy@burza.cz" && !user.GetBool("onboardingComplete") {
+				user.Set("onboardingComplete", true)
+				user.Set("payoutToBank", true)
+				_ = app.Save(user)
 			}
 		}
 		if u.email == "seller@burza.cz" {
