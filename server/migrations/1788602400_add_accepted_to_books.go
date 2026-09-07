@@ -8,7 +8,7 @@ func init() {
 	core.AppMigrations.Register(func(app core.App) error {
 		booksColl, err := app.FindCollectionByNameOrId("books")
 		if err != nil {
-			return err
+			return nil
 		}
 
 		if booksColl.Fields.GetByName("accepted") == nil {
@@ -22,7 +22,7 @@ func init() {
 	}, func(app core.App) error {
 		booksColl, err := app.FindCollectionByNameOrId("books")
 		if err != nil {
-			return err
+			return nil
 		}
 
 		if booksColl.Fields.GetByName("accepted") != nil {

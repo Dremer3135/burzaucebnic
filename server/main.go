@@ -54,10 +54,70 @@ func main() {
 		Automigrate: false,
 	})
 
-	// Hook: ensure accepted is false when books are created by non-cashiers
+	registerHooks(app)
+
+	// 3. Schema & Seed setup on startup, custom API routes & reaper
+	app.OnServe().BindFunc(func(e *core.ServeEvent) error {
+		// Run pending DB migrations
+		runner := core.NewMigrationsRunner(e.App, core.AppMigrations)
+		if applied, err := runner.Up(); err != nil {
+			log.Printf("[MIGRATIONS ERROR] %v", err)
+			return err
+		} else if len(applied) > 0 {
+			log.Printf("[MIGRATIONS] Successfully applied %d migration(s): %v", len(applied), applied)
+		}
+
+		if err := ensureSchema(e.App); err != nil {
+			log.Printf("[SCHEMA ERROR] %v", err)
+			return err
+		}
+
+		if err := seedInitialData(e.App); err != nil {
+			log.Printf("[SEED ERROR] %v", err)
+		}
+
+		registerApiEndpoints(e)
+
+		return e.Next()
+	})
+
+	if err := app.Start(); err != nil {
+		log.Fatal(err)
+	}
+}
+
+func registerHooks(app core.App) {
+	// Hook: validate that new book ID is not an existing user ID or already registered book,
+	// and ensure accepted is false when books are created by non-cashiers
 	app.OnRecordCreateRequest("books").BindFunc(func(e *core.RecordRequestEvent) error {
+		bookId := strings.TrimSpace(e.Record.Id)
+		if bookId == "" && e.Request != nil {
+			bookId = strings.TrimSpace(e.Request.FormValue("id"))
+		}
+
+		if bookId != "" {
+			// Reject if ID matches an existing user
+			if user, err := e.App.FindRecordById("users", bookId); err == nil && user != nil {
+				return e.BadRequestError("Kód knihy se nesmí shodovat s ID uživatele.", nil)
+			}
+			// Reject if ID matches an already registered book
+			if existingBook, err := e.App.FindRecordById("books", bookId); err == nil && existingBook != nil {
+				return e.BadRequestError("Kniha s tímto kódem již v systému existuje.", nil)
+			}
+		}
+
 		if e.Auth == nil || !e.Auth.GetBool("isCashier") {
 			e.Record.Set("accepted", false)
+		}
+		return e.Next()
+	})
+
+	// Hook: core model-level validation ensuring no book can ever be saved with a user ID
+	app.OnRecordCreate("books").BindFunc(func(e *core.RecordEvent) error {
+		if e.Record.Id != "" {
+			if user, err := e.App.FindRecordById("users", e.Record.Id); err == nil && user != nil {
+				return fmt.Errorf("kód knihy se nesmí shodovat s ID uživatele: %s", e.Record.Id)
+			}
 		}
 		return e.Next()
 	})
@@ -110,35 +170,6 @@ func main() {
 		go compressImageWithFFmpeg(filePath)
 		return e.Next()
 	})
-
-	// 3. Schema & Seed setup on startup, custom API routes & reaper
-	app.OnServe().BindFunc(func(e *core.ServeEvent) error {
-		// Run pending DB migrations
-		runner := core.NewMigrationsRunner(e.App, core.AppMigrations)
-		if applied, err := runner.Up(); err != nil {
-			log.Printf("[MIGRATIONS ERROR] %v", err)
-			return err
-		} else if len(applied) > 0 {
-			log.Printf("[MIGRATIONS] Successfully applied %d migration(s): %v", len(applied), applied)
-		}
-
-		if err := ensureSchema(e.App); err != nil {
-			log.Printf("[SCHEMA ERROR] %v", err)
-			return err
-		}
-
-		if err := seedInitialData(e.App); err != nil {
-			log.Printf("[SEED ERROR] %v", err)
-		}
-
-		registerApiEndpoints(e)
-
-		return e.Next()
-	})
-
-	if err := app.Start(); err != nil {
-		log.Fatal(err)
-	}
 }
 
 // compressImageWithFFmpeg scales image down to 720p width maintaining aspect ratio and compresses JPEG
@@ -150,7 +181,7 @@ func compressImageWithFFmpeg(filePath string) {
 	}
 
 	tmpOutput := filePath + ".opt.jpg"
-	cmd := exec.Command("ffmpeg", "-y", "-i", filePath, "-vf", "scale='min(720,iw)':-2", "-q:v", "3", tmpOutput)
+	cmd := exec.Command("ffmpeg", "-y", "-i", filePath, "-vf", "scale='min(720,iw)':-2", "-frames:v", "1", "-update", "1", "-q:v", "3", tmpOutput)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		log.Printf("[FFMPEG COMPRESSION FAILED] %v: %s", err, string(out))
 		return
@@ -619,6 +650,46 @@ func seedInitialData(app core.App) error {
 
 // registerApiEndpoints registers custom API routes
 func registerApiEndpoints(e *core.ServeEvent) {
+	// GET /api/check-book-code?code={code} - Fast check if code is available for registering a new book
+	e.Router.GET("/api/check-book-code", func(c *core.RequestEvent) error {
+		authRecord := c.Auth
+		if authRecord == nil {
+			return c.UnauthorizedError("Přihlášení je vyžadováno.", nil)
+		}
+
+		code := strings.TrimSpace(c.Request.URL.Query().Get("code"))
+		if code == "" {
+			return c.BadRequestError("Chybí kód.", nil)
+		}
+
+		// 1. Check if the code belongs to any user
+		if user, err := c.App.FindRecordById("users", code); err == nil && user != nil {
+			return c.JSON(http.StatusOK, map[string]any{
+				"code":    code,
+				"status":  "user",
+				"type":    "user_id",
+				"message": "Toto je kód uživatele, nikoliv učebnice.",
+			})
+		}
+
+		// 2. Check if already used by an existing book
+		if book, err := c.App.FindRecordById("books", code); err == nil && book != nil {
+			return c.JSON(http.StatusOK, map[string]any{
+				"code":    code,
+				"status":  "used",
+				"type":    "book",
+				"message": "Tento kód knihy je již v systému zaregistrován.",
+			})
+		}
+
+		// 3. Available
+		return c.JSON(http.StatusOK, map[string]any{
+			"code":    code,
+			"status":  "available",
+			"message": "Kód je volný.",
+		})
+	}).Bind(apis.RequireAuth("users"))
+
 	// GET /api/book-price?id={id} - Query book price and status by Data Matrix ID
 	e.Router.GET("/api/book-price", func(c *core.RequestEvent) error {
 		authRecord := c.Auth
@@ -629,6 +700,17 @@ func registerApiEndpoints(e *core.ServeEvent) {
 		id := strings.TrimSpace(c.Request.URL.Query().Get("id"))
 		if id == "" {
 			return c.BadRequestError("Chybí ID knihy.", nil)
+		}
+
+		// If the ID corresponds to a user, it cannot be a book
+		if user, err := c.App.FindRecordById("users", id); err == nil && user != nil {
+			return c.JSON(http.StatusBadRequest, map[string]any{
+				"status":  http.StatusBadRequest,
+				"message": "Toto je kód uživatele, nikoliv učebnice.",
+				"type":    "user_id",
+				"error":   "user_id",
+				"id":      id,
+			})
 		}
 
 		book, err := c.App.FindRecordById("books", id)

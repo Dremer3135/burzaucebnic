@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount, onDestroy } from 'svelte';
-	import { auth, eventStore, sellerBooks, priceStore } from '$lib/stores.svelte';
+	import { auth, eventStore, sellerBooks, priceStore, bookCodeStore } from '$lib/stores.svelte';
 	import { pb, getBookThumbnailUrl, getBookFullImageUrl } from '$lib/pocketbase';
 	import {
 		scanFrameForAllDataMatrices,
@@ -12,7 +12,7 @@
 		type ScanMatch
 	} from '$lib/scanner';
 	import { Plus, Camera, Check, X, Tag, AlertCircle, RefreshCw, ChevronLeft, AlertTriangle } from '@lucide/svelte';
-	import type { Book } from '$lib/types';
+	import type { Book, CodeStatus } from '$lib/types';
 
 	let isModalOpen = $state(false);
 	// Steps: 'SCAN_CODE' | 'CAPTURE_COVER' | 'ENTER_PRICE'
@@ -21,7 +21,7 @@
 	let scannedCode = $state('');
 	let activeDetectedCode = $state<string | null>(null);
 	let activeMatch = $state<ScanMatch | null>(null);
-	let activeCodeStatus = $state<'checking' | 'available' | 'used'>('checking');
+	let activeCodeStatus = $state<CodeStatus>('checking');
 	let lastSeenCodeTime = 0;
 	let lastVibratedStatus = $state<string | null>(null);
 
@@ -31,21 +31,22 @@
 	}
 	const trackedMatches = new Map<string, TrackedMatch>();
 
-	function getCodeStatus(code: string): 'checking' | 'available' | 'used' {
+	function getCodeStatus(code: string): CodeStatus {
+		if (auth.user && auth.user.id === code) return 'user';
 		if (sellerBooks.books.some((b) => b.id === code)) return 'used';
-		const isUsed = priceStore.isUsed(code);
-		if (isUsed === true) return 'used';
-		if (isUsed === false) return 'available';
-		return 'checking';
+		return bookCodeStore.getStatus(code, auth.user?.id);
 	}
 
-	function getStatusPriority(status: 'checking' | 'available' | 'used'): number {
+	function getStatusPriority(status: CodeStatus): number {
 		switch (status) {
 			case 'available':
-				return 2;
+				return 3;
 			case 'checking':
-				return 1;
+				return 2;
 			case 'used':
+				return 1;
+			case 'user':
+			case 'invalid':
 				return 0;
 		}
 	}
@@ -167,8 +168,8 @@
 				for (const match of detected) {
 					const code = match.text.trim();
 					if (code) {
-						if (!priceStore.has(code) && !sellerBooks.books.some((b) => b.id === code)) {
-							priceStore.fetchPrice(code);
+						if (!bookCodeStore.has(code) && !sellerBooks.books.some((b) => b.id === code)) {
+							bookCodeStore.validateCode(code, auth.user?.id);
 						}
 						trackedMatches.set(code, { match, lastSeen: seenTime });
 					}
@@ -181,7 +182,7 @@
 					}
 				}
 
-				// Pick best code closest to center of the video frame, prioritizing available > checking > used
+				// Pick best code closest to center of the video frame, prioritizing available > checking > used > user
 				if (trackedMatches.size > 0 && videoElement) {
 					let bestMatch: ScanMatch | null = null;
 					let bestCode: string | null = null;
@@ -213,7 +214,7 @@
 						const vibrationKey = `${bestCode}:${status}`;
 						if (lastVibratedStatus !== vibrationKey && navigator.vibrate) {
 							lastVibratedStatus = vibrationKey;
-							if (status === 'used') {
+							if (status === 'used' || status === 'user' || status === 'invalid') {
 								navigator.vibrate([150, 80, 150]);
 							} else if (status === 'available') {
 								navigator.vibrate([60]);
@@ -278,14 +279,14 @@
 				for (const [code, item] of trackedMatches.entries()) {
 					if (now - item.lastSeen < 450) {
 						const status = getCodeStatus(code);
-						// Do not highlight unavailable/used codes if they are not the active/selected one
-						if (status === 'used' && code !== activeDetectedCode) {
+						// Do not highlight unavailable/used/user/invalid codes if they are not the active/selected one
+						if ((status === 'used' || status === 'user' || status === 'invalid') && code !== activeDetectedCode) {
 							continue;
 						}
 
 						let color = '#10b981'; // Green for available
-						if (status === 'used') {
-							color = '#ef4444'; // Red for used
+						if (status === 'used' || status === 'user' || status === 'invalid') {
+							color = '#ef4444'; // Red for used, user or invalid
 						} else if (status === 'checking') {
 							color = '#f59e0b'; // Amber for checking
 						}
@@ -304,7 +305,7 @@
 	}
 
 	function confirmScannedCode() {
-		if (!activeDetectedCode || activeCodeStatus === 'used') return;
+		if (!activeDetectedCode || activeCodeStatus === 'used' || activeCodeStatus === 'user' || activeCodeStatus === 'invalid' || activeCodeStatus === 'checking') return;
 		if (navigator.vibrate) navigator.vibrate([100]);
 		scannedCode = activeDetectedCode;
 		step = 'CAPTURE_COVER';
@@ -373,23 +374,45 @@
 			return;
 		}
 
+		const cleanCode = scannedCode.trim();
+
+		// Prevent user from submitting their own user ID
+		if (cleanCode === auth.user.id) {
+			errorMessage = 'Toto je kód uživatele, nikoliv učebnice.';
+			return;
+		}
+
 		isSubmitting = true;
 		errorMessage = '';
 
 		try {
+			// Final pre-flight verification against user IDs and existing books
+			const check = await bookCodeStore.validateCode(cleanCode, auth.user.id);
+			if (check.status === 'user' || check.status === 'invalid') {
+				errorMessage = 'Toto je kód uživatele, nikoliv učebnice.';
+				isSubmitting = false;
+				return;
+			}
+			if (check.status === 'used') {
+				errorMessage = `Kód '${cleanCode}' je již v databázi zaregistrován. Použijte prosím jinou samolepku.`;
+				isSubmitting = false;
+				return;
+			}
+
 			const formData = new FormData();
-			formData.append('id', scannedCode.trim());
+			formData.append('id', cleanCode);
 			formData.append('seller', auth.user.id);
 			formData.append('event', eventStore.event.id);
 			formData.append('price', String(priceInput));
 			formData.append('status', 'available');
-			formData.append('photo', capturedPhotoBlob, `book_${scannedCode.trim()}.jpg`);
+			formData.append('photo', capturedPhotoBlob, `book_${cleanCode}.jpg`);
 
 			await pb.collection('books').create(formData);
 
-			// Mark as used in priceStore immediately
-			priceStore.set(scannedCode.trim(), {
-				id: scannedCode.trim(),
+			// Mark as used immediately in both stores
+			bookCodeStore.set(cleanCode, 'used');
+			priceStore.set(cleanCode, {
+				id: cleanCode,
 				price: Number(priceInput),
 				status: 'available'
 			});
@@ -399,8 +422,17 @@
 		} catch (err: any) {
 			console.error('Book submission error', err);
 			const msg = String(err?.message || '').toLowerCase();
-			if (err?.status === 400 || msg.includes('unique') || msg.includes('id') || msg.includes('exist')) {
-				errorMessage = `Kód '${scannedCode.trim()}' je již v databázi zaregistrován. Použijte prosím jinou samolepku.`;
+			const errData = err?.response?.data || err?.data;
+			if (
+				msg.includes('uživatel') ||
+				msg.includes('user') ||
+				errData?.type === 'user_id' ||
+				errData?.error === 'user_id' ||
+				err?.response?.type === 'user_id'
+			) {
+				errorMessage = 'Toto je kód uživatele, nikoliv učebnice.';
+			} else if (err?.status === 400 || msg.includes('unique') || msg.includes('id') || msg.includes('exist')) {
+				errorMessage = `Kód '${cleanCode}' je již v databázi zaregistrován. Použijte prosím jinou samolepku.`;
 			} else {
 				errorMessage = err?.message || 'Chyba při ukládání učebnice. Zkontrolujte, zda kód již neexistuje.';
 			}
@@ -609,7 +641,23 @@
 
 				{#if activeDetectedCode}
 					<div class="absolute bottom-6 inset-x-0 flex flex-col items-center gap-2 z-20 px-4">
-						{#if activeCodeStatus === 'used'}
+						{#if activeCodeStatus === 'user' || activeCodeStatus === 'invalid'}
+							<div class="bg-red-600 text-white border-2 border-black px-4 py-2.5 text-center shadow-none w-full max-w-sm flex items-center justify-center gap-3">
+								<AlertCircle class="w-6 h-6 flex-shrink-0 text-white" />
+								<div class="text-left">
+									<p class="text-xs font-black uppercase tracking-wider">KÓD PATŘÍ UŽIVATELI!</p>
+									<p class="text-[11px] font-bold text-red-100">Toto je kód uživatele, nikoliv učebnice.</p>
+								</div>
+							</div>
+							<button
+								type="button"
+								disabled
+								class="w-full max-w-sm py-4 bg-neutral-200 text-neutral-500 font-black text-sm uppercase tracking-wider border-2 border-neutral-400 flex items-center justify-center gap-2 cursor-not-allowed"
+							>
+								<X class="w-5 h-5 text-red-500" />
+								<span>KÓD UŽIVATELE (NELZE POTVRDIT)</span>
+							</button>
+						{:else if activeCodeStatus === 'used'}
 							<div class="bg-red-600 text-white border-2 border-black px-4 py-2.5 text-center shadow-none w-full max-w-sm flex items-center justify-center gap-3">
 								<AlertCircle class="w-6 h-6 flex-shrink-0 text-white" />
 								<div class="text-left">
@@ -617,10 +665,14 @@
 									<p class="text-[11px] font-bold text-red-100">Kód <span class="font-mono">{activeDetectedCode}</span> už v systému existuje.</p>
 								</div>
 							</div>
-							<div class="w-full max-w-sm py-3.5 bg-black text-white font-black text-xs uppercase tracking-wider border-2 border-black flex items-center justify-center gap-2 text-center px-3">
-								<AlertTriangle class="w-4 h-4 text-amber-400" />
-								<span>POUŽIJTE JINOU SAMOLEPKU</span>
-							</div>
+							<button
+								type="button"
+								disabled
+								class="w-full max-w-sm py-4 bg-neutral-200 text-neutral-500 font-black text-sm uppercase tracking-wider border-2 border-neutral-400 flex items-center justify-center gap-2 cursor-not-allowed"
+							>
+								<X class="w-5 h-5 text-red-500" />
+								<span>KÓD JIŽ EXISTUJE (NELZE POTVRDIT)</span>
+							</button>
 						{:else if activeCodeStatus === 'checking'}
 							<div class="bg-white border-2 border-black px-4 py-2 text-xs font-black uppercase text-black flex items-center gap-2">
 								<RefreshCw class="w-4 h-4 animate-spin text-neutral-600" />

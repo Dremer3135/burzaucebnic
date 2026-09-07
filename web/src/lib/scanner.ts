@@ -220,7 +220,7 @@ export function drawStatusTag(
 	ctx: CanvasRenderingContext2D,
 	pos: Position,
 	transform: VideoTransform,
-	status: 'used' | 'available' | 'checking'
+	status: 'used' | 'available' | 'checking' | 'user' | 'invalid'
 ) {
 	const { scale, offsetX, offsetY } = transform;
 	const p1 = { x: pos.topLeft.x * scale + offsetX, y: pos.topLeft.y * scale + offsetY };
@@ -232,6 +232,9 @@ export function drawStatusTag(
 	let bgColor = '#059669';
 	if (status === 'used') {
 		text = 'JIŽ POUŽITO';
+		bgColor = '#dc2626';
+	} else if (status === 'user' || status === 'invalid') {
+		text = 'KÓD UŽIVATELE';
 		bgColor = '#dc2626';
 	} else if (status === 'checking') {
 		text = 'OVĚŘUJI...';

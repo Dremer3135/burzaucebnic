@@ -48,6 +48,14 @@ export interface BookPriceResponse {
 	status: BookStatus;
 }
 
+export type CodeStatus = 'checking' | 'available' | 'used' | 'user' | 'invalid';
+
+export interface CodeValidationResult {
+	code: string;
+	status: 'available' | 'used' | 'user' | 'invalid' | 'checking';
+	message?: string;
+}
+
 export type PaymentMethod = 'qr' | 'cash';
 export type PaymentStatus = 'pending' | 'completed' | 'cancelled';
 

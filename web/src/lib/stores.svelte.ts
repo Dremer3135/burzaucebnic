@@ -1,5 +1,5 @@
 import { pb } from './pocketbase';
-import type { User, Event, Book, Payment } from './types';
+import type { User, Event, Book, Payment, CodeStatus, CodeValidationResult } from './types';
 
 // ==========================================
 // 1. AUTH STORE
@@ -479,8 +479,8 @@ class PriceStore {
 				this.cache.set(id, { data, cachedAt: Date.now() });
 				return data;
 			} catch (err: any) {
-				// Record not found (404) means code is free
-				if (err?.status === 404) {
+				// Record not found (404) or user ID (400) means not a book
+				if (err?.status === 404 || err?.status === 400) {
 					this.cache.set(id, { data: null, cachedAt: Date.now() });
 					return null;
 				}
@@ -505,3 +505,134 @@ class PriceStore {
 }
 
 export const priceStore = new PriceStore(10_000);
+ 
+// ==========================================
+// 6. BOOK CODE STORE (Validation & cache for /sell)
+// ==========================================
+class BookCodeStore {
+	private cache = new Map<string, { data: CodeValidationResult; cachedAt: number }>();
+	private inFlight = new Map<string, Promise<CodeValidationResult>>();
+	private unsub: (() => void) | null = null;
+	private ttlMs: number;
+
+	constructor(ttlMs = 15_000) {
+		this.ttlMs = ttlMs;
+		if (typeof window !== 'undefined') {
+			this.subscribe();
+		}
+	}
+
+	private async subscribe() {
+		try {
+			this.unsub = await pb.collection('books').subscribe<Book>('*', (e) => {
+				if (e.action === 'create') {
+					this.set(e.record.id, 'used', 'Kód knihy je již použit.');
+				} else if (e.action === 'delete') {
+					this.set(e.record.id, 'available', 'Kód je volný.');
+				}
+			});
+		} catch (err) {
+			console.warn('Could not subscribe to books in BookCodeStore', err);
+		}
+	}
+
+	getStatus(code: string, currentUserId?: string): CodeStatus {
+		const clean = code?.trim();
+		if (!clean) return 'checking';
+		if (currentUserId && clean === currentUserId) return 'user';
+		const entry = this.cache.get(clean);
+		if (!entry || Date.now() - entry.cachedAt > this.ttlMs) return 'checking';
+		return entry.data.status;
+	}
+
+	has(code: string): boolean {
+		const clean = code?.trim();
+		if (!clean) return false;
+		const entry = this.cache.get(clean);
+		if (!entry) return false;
+		return Date.now() - entry.cachedAt < this.ttlMs;
+	}
+
+	set(code: string, status: 'available' | 'used' | 'user' | 'invalid', message?: string) {
+		const clean = code?.trim();
+		if (!clean) return;
+		this.cache.set(clean, {
+			data: { code: clean, status, message },
+			cachedAt: Date.now()
+		});
+	}
+
+	async validateCode(code: string, currentUserId?: string): Promise<CodeValidationResult> {
+		const cleanCode = code.trim();
+		if (!cleanCode) {
+			return { code: cleanCode, status: 'checking', message: 'Prázdný kód' };
+		}
+
+		if (currentUserId && cleanCode === currentUserId) {
+			const res: CodeValidationResult = {
+				code: cleanCode,
+				status: 'user',
+				message: 'Toto je kód uživatele, nikoliv učebnice.'
+			};
+			this.set(cleanCode, 'user', res.message);
+			return res;
+		}
+
+		const entry = this.cache.get(cleanCode);
+		if (entry && Date.now() - entry.cachedAt < this.ttlMs) {
+			return entry.data;
+		}
+
+		if (this.inFlight.has(cleanCode)) {
+			return this.inFlight.get(cleanCode)!;
+		}
+
+		const promise = (async () => {
+			try {
+				const res = await pb.send<CodeValidationResult>(
+					`/api/check-book-code?code=${encodeURIComponent(cleanCode)}`,
+					{ method: 'GET' }
+				);
+				this.cache.set(cleanCode, { data: res, cachedAt: Date.now() });
+				return res;
+			} catch (err: any) {
+				const msg = String(err?.message || '').toLowerCase();
+				const errData = err?.response?.data || err?.data;
+				if (
+					msg.includes('uživatel') ||
+					msg.includes('user') ||
+					errData?.type === 'user_id' ||
+					errData?.error === 'user_id' ||
+					err?.response?.type === 'user_id'
+				) {
+					const res: CodeValidationResult = {
+						code: cleanCode,
+						status: 'user',
+						message: 'Toto je kód uživatele, nikoliv učebnice.'
+					};
+					this.cache.set(cleanCode, { data: res, cachedAt: Date.now() });
+					return res;
+				}
+				if (err?.status === 404) {
+					const res: CodeValidationResult = { code: cleanCode, status: 'available' };
+					this.cache.set(cleanCode, { data: res, cachedAt: Date.now() });
+					return res;
+				}
+				const fallback: CodeValidationResult = { code: cleanCode, status: 'checking', message: err?.message };
+				return fallback;
+			} finally {
+				this.inFlight.delete(cleanCode);
+			}
+		})();
+
+		this.inFlight.set(cleanCode, promise);
+		return promise;
+	}
+
+	clear() {
+		this.cache.clear();
+		this.inFlight.clear();
+	}
+}
+
+export const bookCodeStore = new BookCodeStore();
