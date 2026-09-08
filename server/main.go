@@ -46,6 +46,7 @@ func getNextVariableSymbol(app core.App) int {
 }
 
 func main() {
+	loadEnvFiles()
 	app := pocketbase.New()
 
 	// 1. Register PocketBase migrations support
@@ -379,6 +380,11 @@ func ensureSchema(app core.App) error {
 				Name: "status",
 				Values: []string{"pending", "completed", "cancelled"}, MaxSelect: 1,
 			},
+			&core.SelectField{
+				Name: "confirmation_type",
+				Values: []string{"manual", "automatic"}, MaxSelect: 1,
+			},
+			&core.TextField{Name: "fio_transaction_id"},
 			&core.RelationField{
 				Name: "cashier",
 				CollectionId: usersColl.Id, MaxSelect: 1,
@@ -391,6 +397,17 @@ func ensureSchema(app core.App) error {
 		}
 	} else {
 		var pChanged bool
+		if paymentsColl.Fields.GetByName("confirmation_type") == nil {
+			paymentsColl.Fields.Add(&core.SelectField{
+				Name: "confirmation_type",
+				Values: []string{"manual", "automatic"}, MaxSelect: 1,
+			})
+			pChanged = true
+		}
+		if paymentsColl.Fields.GetByName("fio_transaction_id") == nil {
+			paymentsColl.Fields.Add(&core.TextField{Name: "fio_transaction_id"})
+			pChanged = true
+		}
 		if paymentsColl.Fields.GetByName("created") == nil {
 			paymentsColl.Fields.Add(&core.AutodateField{Name: "created", OnCreate: true})
 			pChanged = true
@@ -666,6 +683,7 @@ func seedInitialData(app core.App) error {
 // registerApiEndpoints registers custom API routes
 func registerApiEndpoints(e *core.ServeEvent) {
 	registerEmailEndpoints(e)
+	registerFioEndpoints(e)
 
 	// GET /api/check-book-code?code={code} - Fast check if code is available for registering a new book
 	e.Router.GET("/api/check-book-code", func(c *core.RequestEvent) error {
@@ -1030,6 +1048,7 @@ func registerApiEndpoints(e *core.ServeEvent) {
 			createdPayment.Set("totalAmount", totalAmount)
 			createdPayment.Set("method", "cash")
 			createdPayment.Set("status", "completed")
+			createdPayment.Set("confirmation_type", "manual")
 			createdPayment.Set("cashier", authRecord.Id)
 
 			if err := txApp.Save(createdPayment); err != nil {
@@ -1158,6 +1177,7 @@ func registerApiEndpoints(e *core.ServeEvent) {
 			// Note: Books stay in buyer's buy relation permanently
 
 			payment.Set("status", "completed")
+			payment.Set("confirmation_type", "manual")
 			if req.Method != "" {
 				payment.Set("method", req.Method)
 			}
@@ -1513,6 +1533,9 @@ func registerApiEndpoints(e *core.ServeEvent) {
 			createdPayment.Set("totalAmount", totalAmount)
 			createdPayment.Set("method", req.Method)
 			createdPayment.Set("status", paymentStatus)
+			if paymentStatus == "completed" {
+				createdPayment.Set("confirmation_type", "manual")
+			}
 			createdPayment.Set("cashier", authRecord.Id)
 
 			if err := txApp.Save(createdPayment); err != nil {

@@ -25,6 +25,67 @@
 	let errorMessage = $state('');
 	let modalError = $state('');
 
+	// Fio Bank Synchronization State
+	let isSyncingFio = $state(false);
+	let fioSyncCooldown = $state(0);
+	let fioCooldownTimer: ReturnType<typeof setInterval> | null = null;
+	let syncMessage = $state<{ type: 'success' | 'info' | 'error'; text: string } | null>(null);
+
+	function startCooldown(seconds: number) {
+		fioSyncCooldown = seconds;
+		if (fioCooldownTimer) clearInterval(fioCooldownTimer);
+		fioCooldownTimer = setInterval(() => {
+			if (fioSyncCooldown > 1) {
+				fioSyncCooldown--;
+			} else {
+				fioSyncCooldown = 0;
+				if (fioCooldownTimer) {
+					clearInterval(fioCooldownTimer);
+					fioCooldownTimer = null;
+				}
+			}
+		}, 1000);
+	}
+
+	async function handleSyncFio() {
+		if (isSyncingFio || fioSyncCooldown > 0) return;
+		isSyncingFio = true;
+		syncMessage = null;
+		errorMessage = '';
+		try {
+			const res = await pb.send<any>('/api/cashier/sync-fio-payments', {
+				method: 'POST'
+			});
+			startCooldown(res.cooldownSeconds || 30);
+			if (res.matchedCount > 0) {
+				syncMessage = {
+					type: 'success',
+					text: `Úspěšně spárováno a potvrzeno ${res.matchedCount} ${res.matchedCount === 1 ? 'platba' : res.matchedCount >= 2 && res.matchedCount <= 4 ? 'platby' : 'plateb'} z Fio banky.`
+				};
+				// Reload payments list from PocketBase
+				await cashierPayments.init();
+			} else {
+				syncMessage = {
+					type: 'info',
+					text: res.message || 'Žádné nové platby k párování nebyly v bance nalezeny.'
+				};
+			}
+		} catch (err: any) {
+			console.error('Fio sync failed', err);
+			const retryAfter = err?.data?.retryAfterSeconds;
+			if (retryAfter) {
+				startCooldown(retryAfter);
+			}
+			const msg = err?.data?.message || err?.message || 'Chyba při synchronizaci s Fio bankou.';
+			syncMessage = {
+				type: 'error',
+				text: msg
+			};
+		} finally {
+			isSyncingFio = false;
+		}
+	}
+
 	$effect(() => {
 		if (auth.isCashier) {
 			cashierPayments.init();
@@ -33,6 +94,7 @@
 
 	onDestroy(() => {
 		cashierPayments.cleanup();
+		if (fioCooldownTimer) clearInterval(fioCooldownTimer);
 	});
 
 	$effect(() => {
@@ -81,7 +143,7 @@
 			});
 			// Optimistic status update for instant visual feedback
 			cashierPayments.payments = cashierPayments.payments.map((p) =>
-				p.id === payment.id ? { ...p, status: 'completed' } : p
+				p.id === payment.id ? { ...p, status: 'completed', confirmation_type: 'manual' } : p
 			);
 			paymentToConfirm = null;
 		} catch (err: any) {
@@ -110,6 +172,24 @@
 		<div class="mb-3 p-2.5 bg-red-50 border-2 border-red-600 text-red-700 text-xs font-bold flex items-center gap-2">
 			<AlertCircle class="w-4 h-4 shrink-0 text-red-600" />
 			<span>{errorMessage}</span>
+		</div>
+	{/if}
+
+	{#if syncMessage}
+		<div class="mb-3 p-2.5 border-2 text-xs font-bold flex items-center justify-between gap-2 {syncMessage.type === 'success' ? 'bg-emerald-50 border-emerald-600 text-emerald-800' : syncMessage.type === 'error' ? 'bg-red-50 border-red-600 text-red-700' : 'bg-blue-50 border-blue-600 text-blue-800'}">
+			<div class="flex items-center gap-2">
+				{#if syncMessage.type === 'success'}
+					<CheckCircle2 class="w-4 h-4 shrink-0 text-emerald-600" />
+				{:else if syncMessage.type === 'error'}
+					<AlertCircle class="w-4 h-4 shrink-0 text-red-600" />
+				{:else}
+					<Clock class="w-4 h-4 shrink-0 text-blue-600" />
+				{/if}
+				<span>{syncMessage.text}</span>
+			</div>
+			<button onclick={() => (syncMessage = null)} class="text-neutral-500 hover:text-black cursor-pointer p-0.5" title="Zavřít zprávu">
+				<X class="w-3.5 h-3.5" />
+			</button>
 		</div>
 	{/if}
 
@@ -143,15 +223,37 @@
 			</button>
 		</div>
 
-		<!-- Search Input -->
-		<div class="relative flex-1 sm:max-w-xs">
-			<Search class="w-3.5 h-3.5 text-black absolute left-2.5 top-2.5" />
-			<input
-				type="text"
-				bind:value={searchQuery}
-				placeholder="Hledat VS, jméno..."
-				class="w-full bg-white border-2 border-black pl-8 pr-3 py-1.5 text-xs font-black uppercase text-black focus:outline-none"
-			/>
+		<!-- Action & Search Area -->
+		<div class="flex items-center gap-2 flex-1 sm:max-w-md justify-end">
+			<!-- Fio Sync Button -->
+			<button
+				onclick={handleSyncFio}
+				disabled={isSyncingFio || fioSyncCooldown > 0}
+				class="px-3 py-1.5 bg-neutral-900 text-white hover:bg-black active:bg-neutral-800 disabled:opacity-50 font-black text-xs uppercase tracking-wider border-2 border-black transition-all flex items-center gap-1.5 cursor-pointer disabled:cursor-not-allowed shrink-0 select-none"
+				title="Zkontrolovat a spárovat příchozí platby z Fio banky"
+			>
+				<RefreshCw class="w-3.5 h-3.5 {isSyncingFio ? 'animate-spin' : ''}" />
+				<span>
+					{#if isSyncingFio}
+						SYNCHRONIZUJI...
+					{:else if fioSyncCooldown > 0}
+						POČKEJTE ({fioSyncCooldown}s)
+					{:else}
+						FIO PÁROVÁNÍ
+					{/if}
+				</span>
+			</button>
+
+			<!-- Search Input -->
+			<div class="relative flex-1">
+				<Search class="w-3.5 h-3.5 text-black absolute left-2.5 top-2.5" />
+				<input
+					type="text"
+					bind:value={searchQuery}
+					placeholder="Hledat VS, jméno..."
+					class="w-full bg-white border-2 border-black pl-8 pr-3 py-1.5 text-xs font-black uppercase text-black focus:outline-none"
+				/>
+			</div>
 		</div>
 	</div>
 
@@ -233,9 +335,20 @@
 								{/if}
 							</button>
 						{:else}
-							<div class="flex items-center gap-1 text-black text-xs font-black uppercase shrink-0">
-								<CheckCircle2 class="w-3.5 h-3.5 text-emerald-600" />
-								<span>VYŘÍZENO</span>
+							<div class="flex items-center gap-1.5 shrink-0">
+								<div class="flex items-center gap-1 text-black text-xs font-black uppercase">
+									<CheckCircle2 class="w-3.5 h-3.5 text-emerald-600" />
+									<span>VYŘÍZENO</span>
+								</div>
+								{#if payment.confirmation_type === 'automatic'}
+									<span class="text-[9px] uppercase font-black px-1.5 py-0.5 border border-black bg-blue-50 text-blue-900" title={payment.fio_transaction_id ? `ID Fio transakce: ${payment.fio_transaction_id}` : 'Potvrzeno automaticky Fio bankou'}>
+										AUTOMATICKY (FIO)
+									</span>
+								{:else if payment.confirmation_type === 'manual'}
+									<span class="text-[9px] uppercase font-black px-1.5 py-0.5 border border-neutral-300 bg-neutral-100 text-neutral-600" title="Potvrzeno manuálně pokladníkem">
+										MANUÁLNĚ
+									</span>
+								{/if}
 							</div>
 						{/if}
 					</div>
@@ -370,8 +483,30 @@
 					{/if}
 				</div>
 
+				<!-- If completed, show confirmation status info banner -->
+				{#if selectedQrPayment.status === 'completed'}
+					<div class="mt-2.5 p-2 bg-neutral-50 border-2 border-black text-xs font-mono">
+						<div class="flex items-center justify-between text-[11px] mb-1">
+							<span class="font-sans font-bold text-neutral-500 uppercase">Stav:</span>
+							<span class="font-black text-emerald-700 uppercase">VYŘÍZENO</span>
+						</div>
+						<div class="flex items-center justify-between text-[11px] mb-1">
+							<span class="font-sans font-bold text-neutral-500 uppercase">Potvrzení:</span>
+							<span class="font-bold text-black uppercase">
+								{selectedQrPayment.confirmation_type === 'automatic' ? 'Automaticky (Fio)' : 'Manuálně (Pokladní)'}
+							</span>
+						</div>
+						{#if selectedQrPayment.fio_transaction_id}
+							<div class="flex items-center justify-between text-[11px]">
+								<span class="font-sans font-bold text-neutral-500 uppercase">Fio ID:</span>
+								<span class="font-bold text-black">{selectedQrPayment.fio_transaction_id}</span>
+							</div>
+						{/if}
+					</div>
+				{/if}
+
 				<!-- Centered SPAYD QR Canvas -->
-				<div class="flex-1 flex flex-col items-center justify-center py-4 min-h-0">
+				<div class="flex-1 flex flex-col items-center justify-center py-3 min-h-0">
 					<div class="bg-white p-2 border-2 border-black shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]">
 						<canvas bind:this={qrModalCanvas} class="w-48 h-48 sm:w-56 sm:h-56 max-h-[42vh] max-w-[42vh] aspect-square block"></canvas>
 					</div>

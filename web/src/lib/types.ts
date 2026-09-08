@@ -59,6 +59,7 @@ export interface CodeValidationResult {
 
 export type PaymentMethod = 'qr' | 'cash';
 export type PaymentStatus = 'pending' | 'completed' | 'cancelled';
+export type ConfirmationType = 'manual' | 'automatic';
 
 export interface Payment {
 	id: string;
@@ -68,6 +69,8 @@ export interface Payment {
 	totalAmount: number;
 	method: PaymentMethod;
 	status: PaymentStatus;
+	confirmation_type?: ConfirmationType;
+	fio_transaction_id?: string;
 	cashier?: string;
 	created: string;
 	updated: string;

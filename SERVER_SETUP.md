@@ -133,9 +133,16 @@ cd /opt/burzaucebnic
 
 ---
 
-### Step 5: Systemd Service Configuration
+### Step 5: Environment & Systemd Configuration
 
-#### 1. Backend Service: `/etc/systemd/system/burza-backend.service`
+#### 1. Server Environment File: `/opt/burzaucebnic/.env`
+Create `/opt/burzaucebnic/.env` (owned by `www-data`, chmod 600) for secrets:
+```bash
+# Fio banka Read-only API token (vygenerován v Internetbankingu: Nastavení -> API -> Pouze sledovat účet)
+FIO_API_TOKEN="vas_64znakovy_fio_token"
+```
+
+#### 2. Backend Service: `/etc/systemd/system/burza-backend.service`
 Create the file with:
 ```ini
 [Unit]
@@ -147,6 +154,7 @@ Type=simple
 User=www-data
 Group=www-data
 WorkingDirectory=/opt/burzaucebnic/server
+EnvironmentFile=-/opt/burzaucebnic/.env
 ExecStart=/opt/burzaucebnic/server/burza-server serve --http="127.0.0.1:<PB_PORT>"
 Restart=always
 RestartSec=5
@@ -156,7 +164,7 @@ LimitNOFILE=65536
 WantedBy=multi-user.target
 ```
 
-#### 2. Frontend Service: `/etc/systemd/system/burza-frontend.service`
+#### 3. Frontend Service: `/etc/systemd/system/burza-frontend.service`
 Create the file with:
 ```ini
 [Unit]
