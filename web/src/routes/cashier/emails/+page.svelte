@@ -873,8 +873,9 @@
 						<div>Počet příjemců: <strong>{stats?.totalSellers ?? 0} prodejců</strong></div>
 						<div>Typ zprávy: <strong>{bulkActionType === 'intake_recap' ? 'Potvrzení příjmu (fotky, ceny, způsob výplaty)' : 'Vyúčtování (prodáno/neprodáno, částka k vyplacení)'}</strong></div>
 					</div>
-					<p class="text-[11px] text-red-600 font-bold">
-						⚠️ Tato akce rozešle skutečné e-maily do schránek studentů. Ujistěte se, že jste předtím otestovali vzhled přes testovací e-mail!
+					<p class="text-[11px] text-red-600 font-bold flex items-center gap-1">
+						<AlertTriangle class="w-3.5 h-3.5 shrink-0" />
+						<span>Tato akce rozešle skutečné e-maily do schránek studentů. Ujistěte se, že jste předtím otestovali vzhled přes testovací e-mail!</span>
 					</p>
 				</div>
 

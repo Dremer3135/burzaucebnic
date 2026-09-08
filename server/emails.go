@@ -116,16 +116,16 @@ func renderBookPhotoHTML(baseURL string, b *core.Record) string {
 	photo := b.GetString("photo")
 	if photo != "" {
 		imgURL := fmt.Sprintf("%s/api/files/books/%s/%s?thumb=120x160", baseURL, b.Id, photo)
-		return fmt.Sprintf(`<img src="%s" width="60" height="85" style="display: block; border: 1px solid #000000; object-fit: cover; background-color: #f4f4f5;" alt="Kniha" />`, imgURL)
+		return fmt.Sprintf(`<img src="%s" width="60" height="85" style="display: block; border: 1px solid #000000; object-fit: cover; background-color: #f4f4f5;" alt="" />`, imgURL)
 	}
-	return `<div style="width: 60px; height: 85px; background-color: #e4e4e7; border: 1px solid #000000; text-align: center; line-height: 85px; font-size: 10px; color: #71717a; font-weight: bold;">Bez fota</div>`
+	return `<div style="width: 60px; height: 85px; background-color: #f4f4f5; border: 1px solid #000000; text-align: center; line-height: 85px; font-size: 10px; color: #71717a; font-weight: bold;">Bez fota</div>`
 }
 
 func renderUnacceptedBookPhotoHTML(baseURL string, b *core.Record) string {
 	photo := b.GetString("photo")
 	if photo != "" {
 		imgURL := fmt.Sprintf("%s/api/files/books/%s/%s?thumb=120x160", baseURL, b.Id, photo)
-		return fmt.Sprintf(`<img src="%s" width="60" height="85" style="display: block; border: 1px solid #ea580c; object-fit: cover; background-color: #fff7ed;" alt="Kniha" />`, imgURL)
+		return fmt.Sprintf(`<img src="%s" width="60" height="85" style="display: block; border: 1px solid #ea580c; object-fit: cover; background-color: #fff7ed;" alt="" />`, imgURL)
 	}
 	return `<div style="width: 60px; height: 85px; background-color: #ffedd5; border: 1px solid #ea580c; text-align: center; line-height: 85px; font-size: 10px; color: #9a3412; font-weight: bold;">Bez fota</div>`
 }
@@ -139,11 +139,11 @@ func wrapEmailHTML(title, headerSubtitle, contentHTML string) string {
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>%s</title>
 </head>
-<body style="margin: 0; padding: 0; background-color: #f4f4f5; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; -webkit-font-smoothing: antialiased; color: #18181b;">
-  <table role="presentation" width="100%%" border="0" cellspacing="0" cellpadding="0" style="background-color: #f4f4f5; padding: 24px 12px;">
+<body style="margin: 0; padding: 0; background-color: #ffffff; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; -webkit-font-smoothing: antialiased; color: #18181b;">
+  <table role="presentation" width="100%%" border="0" cellspacing="0" cellpadding="0" style="margin: 0; padding: 0; background-color: #ffffff;">
     <tr>
-      <td align="center">
-        <table role="presentation" width="100%%" border="0" cellspacing="0" cellpadding="0" style="max-width: 600px; background-color: #ffffff; border: 2px solid #000000; box-shadow: 4px 4px 0px #000000; text-align: left;">
+      <td align="center" style="margin: 0; padding: 0;">
+        <table role="presentation" width="100%%" border="0" cellspacing="0" cellpadding="0" style="max-width: 600px; width: 100%%; background-color: #ffffff; border: 2px solid #000000; margin: 0 auto; padding: 0; text-align: left;">
           <!-- Header -->
           <tr>
             <td style="background-color: #000000; color: #ffffff; padding: 20px 24px;">
@@ -157,7 +157,7 @@ func wrapEmailHTML(title, headerSubtitle, contentHTML string) string {
           </tr>
           <!-- Body Content -->
           <tr>
-            <td style="padding: 24px; font-size: 14px; line-height: 1.6; color: #27272a;">
+            <td style="padding: 24px; font-size: 14px; line-height: 1.6; color: #27272a; background-color: #ffffff;">
               %s
             </td>
           </tr>
@@ -198,7 +198,7 @@ func RenderIntakeRecapEmail(app core.App, user *core.Record, event *core.Record,
 
 	subject := replaceVariables(tmpl.Subject, vars)
 
-	// Payout variant note: ONLY the selected option!
+	// Payout variant note: ONLY the selected option, no nested box border
 	var payoutBoxHTML string
 	payoutToBank := user.GetBool("payoutToBank")
 	iban := strings.TrimSpace(user.GetString("iban"))
@@ -211,9 +211,9 @@ func RenderIntakeRecapEmail(app core.App, user *core.Record, event *core.Record,
 		}
 		payoutNote := replaceVariables(tmpl.PayoutBankNote, payoutVars)
 		payoutBoxHTML = fmt.Sprintf(`
-      <div style="background-color: #f4f4f5; border: 2px solid #000000; padding: 14px 16px; margin: 18px 0;">
-        <div style="font-size: 11px; font-weight: 800; text-transform: uppercase; color: #71717a; margin-bottom: 2px;">Způsob vyplacení výtěžku</div>
-        <div style="font-size: 13px; color: #000000;">%s</div>
+      <div style="background-color: #f4f4f5; padding: 14px 18px; margin: 20px 0;">
+        <div style="font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.5px; color: #71717a; margin-bottom: 4px;">Způsob vyplacení výtěžku</div>
+        <div style="font-size: 14px; color: #18181b; line-height: 1.5;">%s</div>
       </div>`, payoutNote)
 	} else {
 		payoutVars := map[string]string{
@@ -222,13 +222,13 @@ func RenderIntakeRecapEmail(app core.App, user *core.Record, event *core.Record,
 		}
 		payoutNote := replaceVariables(tmpl.PayoutCashNote, payoutVars)
 		payoutBoxHTML = fmt.Sprintf(`
-      <div style="background-color: #f4f4f5; border: 2px solid #000000; padding: 14px 16px; margin: 18px 0;">
-        <div style="font-size: 11px; font-weight: 800; text-transform: uppercase; color: #71717a; margin-bottom: 2px;">Způsob vyplacení výtěžku</div>
-        <div style="font-size: 13px; color: #000000;">%s</div>
+      <div style="background-color: #f4f4f5; padding: 14px 18px; margin: 20px 0;">
+        <div style="font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.5px; color: #71717a; margin-bottom: 4px;">Způsob vyplacení výtěžku</div>
+        <div style="font-size: 14px; color: #18181b; line-height: 1.5;">%s</div>
       </div>`, payoutNote)
 	}
 
-	// Accepted books table (NO CODES - only photo and price)
+	// Accepted books table (NO CODES, NO BADGES - only photo and price)
 	var acceptedSectionHTML string
 	if len(acceptedBooks) > 0 {
 		var sum float64
@@ -248,30 +248,27 @@ func RenderIntakeRecapEmail(app core.App, user *core.Record, event *core.Record,
 
 			rowsHTML.WriteString(fmt.Sprintf(`
         <tr style="%s">
-          <td style="padding: 10px 12px; width: 70px;">
+          <td style="padding: 10px 0; width: 70px;">
             %s
           </td>
-          <td style="padding: 10px 12px; vertical-align: middle;">
-            <div style="font-size: 15px; font-weight: 800; color: #000000;">%.0f Kč</div>
-            <div style="display: inline-block; background-color: #ecfdf5; border: 1px solid #059669; color: #065f46; font-size: 11px; font-weight: 700; padding: 2px 6px; margin-top: 4px;">
-              ✓ Přijato k prodeji
-            </div>
+          <td style="padding: 10px 16px; vertical-align: middle;">
+            <div style="font-size: 16px; font-weight: 900; color: #000000;">%.0f Kč</div>
           </td>
         </tr>`, borderBottom, imgTag, price))
 		}
 
 		acceptedSectionHTML = fmt.Sprintf(`
-      <div style="margin: 20px 0 10px 0;">
+      <div style="margin: 24px 0 10px 0;">
         <div style="font-size: 12px; font-weight: 900; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px; color: #000000;">
           Přijaté učebnice k prodeji (%d ks, celkem %.0f Kč)
         </div>
-        <table role="presentation" width="100%%" border="0" cellspacing="0" cellpadding="0" style="border: 2px solid #000000; background-color: #ffffff;">
+        <table role="presentation" width="100%%" border="0" cellspacing="0" cellpadding="0" style="background-color: #ffffff;">
           %s
         </table>
       </div>`, len(acceptedBooks), sum, rowsHTML.String())
 	}
 
-	// Unaccepted books section (if any)
+	// Unaccepted books section (if any) - clean warning background, NO nested boxes, NO emojis, NO badges
 	var unacceptedSectionHTML string
 	if len(unacceptedBooks) > 0 {
 		var unacceptedRows strings.Builder
@@ -286,14 +283,11 @@ func RenderIntakeRecapEmail(app core.App, user *core.Record, event *core.Record,
 
 			unacceptedRows.WriteString(fmt.Sprintf(`
         <tr style="%s">
-          <td style="padding: 10px 12px; width: 70px;">
+          <td style="padding: 10px 0; width: 70px;">
             %s
           </td>
-          <td style="padding: 10px 12px; vertical-align: middle;">
-            <div style="font-size: 14px; font-weight: 700; color: #78350f;">%.0f Kč</div>
-            <div style="display: inline-block; background-color: #fee2e2; border: 1px solid #dc2626; color: #991b1b; font-size: 11px; font-weight: 700; padding: 2px 6px; margin-top: 4px;">
-              ✗ Nepřijato k prodeji
-            </div>
+          <td style="padding: 10px 16px; vertical-align: middle;">
+            <div style="font-size: 16px; font-weight: 900; color: #9a3412;">%.0f Kč</div>
           </td>
         </tr>`, borderBottom, imgTag, price))
 		}
@@ -304,14 +298,14 @@ func RenderIntakeRecapEmail(app core.App, user *core.Record, event *core.Record,
 		}
 
 		unacceptedSectionHTML = fmt.Sprintf(`
-      <div style="margin: 24px 0 10px 0; background-color: #fff7ed; border: 2px solid #ea580c; padding: 14px 16px;">
-        <div style="font-size: 12px; font-weight: 900; text-transform: uppercase; color: #9a3412; margin-bottom: 6px;">
-          ⚠️ Upozornění: Nepřijaté učebnice (%d ks)
+      <div style="margin: 28px 0 10px 0; background-color: #fff7ed; padding: 18px 20px;">
+        <div style="font-size: 12px; font-weight: 900; text-transform: uppercase; letter-spacing: 0.5px; color: #9a3412; margin-bottom: 6px;">
+          Upozornění: Nepřijaté učebnice (%d ks)
         </div>
-        <p style="font-size: 13px; color: #7c2d12; margin: 0 0 12px 0; line-height: 1.5;">
+        <p style="font-size: 13px; color: #7c2d12; margin: 0 0 14px 0; line-height: 1.5;">
           %s
         </p>
-        <table role="presentation" width="100%%" border="0" cellspacing="0" cellpadding="0" style="border: 1px solid #ea580c; background-color: #ffffff;">
+        <table role="presentation" width="100%%" border="0" cellspacing="0" cellpadding="0">
           %s
         </table>
       </div>`, len(unacceptedBooks), html.EscapeString(warningText), unacceptedRows.String())
@@ -374,7 +368,7 @@ func RenderSaleSummaryEmail(app core.App, user *core.Record, event *core.Record,
 
 	subject := replaceVariables(tmpl.Subject, vars)
 
-	// Summary Highlights Card
+	// Summary Highlights Card - no nested box border
 	var payoutMethodNote string
 	if payoutToBank && iban != "" {
 		payoutMethodNote = replaceVariables(tmpl.PayoutBankNote, vars)
@@ -383,15 +377,15 @@ func RenderSaleSummaryEmail(app core.App, user *core.Record, event *core.Record,
 	}
 
 	summaryCardHTML := fmt.Sprintf(`
-    <div style="background-color: #f4f4f5; border: 2px solid #000000; padding: 16px 20px; margin: 18px 0;">
+    <div style="background-color: #f4f4f5; padding: 16px 20px; margin: 20px 0;">
       <table role="presentation" width="100%%" border="0" cellspacing="0" cellpadding="0">
         <tr>
           <td style="vertical-align: top; padding-right: 12px;">
-            <div style="font-size: 11px; font-weight: 800; text-transform: uppercase; color: #71717a;">Prodáno</div>
+            <div style="font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.5px; color: #71717a;">Prodáno</div>
             <div style="font-size: 20px; font-weight: 900; color: #000000;">%d z %d ks</div>
           </td>
           <td style="vertical-align: top; text-align: right;">
-            <div style="font-size: 11px; font-weight: 800; text-transform: uppercase; color: #71717a;">K vyplacení</div>
+            <div style="font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.5px; color: #71717a;">K vyplacení</div>
             <div style="font-size: 24px; font-weight: 900; color: #059669;">%.0f Kč</div>
           </td>
         </tr>
@@ -401,7 +395,7 @@ func RenderSaleSummaryEmail(app core.App, user *core.Record, event *core.Record,
       </div>
     </div>`, soldCount, len(acceptedBooks), totalPayout, payoutMethodNote)
 
-	// Table of accepted books with sale status (NO CODES)
+	// Table of accepted books with sale status (NO CODES, clean typography)
 	var booksTableHTML strings.Builder
 	for i, b := range acceptedBooks {
 		imgTag := renderBookPhotoHTML(baseURL, b)
@@ -413,23 +407,23 @@ func RenderSaleSummaryEmail(app core.App, user *core.Record, event *core.Record,
 			borderBottom = ""
 		}
 
-		var statusBadge string
+		var statusText string
 		if isSold {
-			statusBadge = `<span style="display: inline-block; background-color: #ecfdf5; border: 1px solid #059669; color: #065f46; font-size: 11px; font-weight: 800; padding: 2px 8px;">✓ PRODÁNO</span>`
+			statusText = `<div style="font-size: 12px; font-weight: 800; color: #059669; text-transform: uppercase; margin-top: 4px;">PRODÁNO</div>`
 		} else {
-			statusBadge = `<span style="display: inline-block; background-color: #f4f4f5; border: 1px solid #71717a; color: #52525b; font-size: 11px; font-weight: 700; padding: 2px 8px;">NEPRODÁNO (k vyzvednutí)</span>`
+			statusText = `<div style="font-size: 12px; font-weight: 700; color: #71717a; text-transform: uppercase; margin-top: 4px;">NEPRODÁNO (k vyzvednutí)</div>`
 		}
 
 		booksTableHTML.WriteString(fmt.Sprintf(`
       <tr style="%s">
-        <td style="padding: 10px 12px; width: 70px;">
+        <td style="padding: 10px 0; width: 70px;">
           %s
         </td>
-        <td style="padding: 10px 12px; vertical-align: middle;">
-          <div style="font-size: 15px; font-weight: 800; color: #000000; margin-bottom: 4px;">%.0f Kč</div>
-          <div>%s</div>
+        <td style="padding: 10px 16px; vertical-align: middle;">
+          <div style="font-size: 16px; font-weight: 900; color: #000000; margin-bottom: 2px;">%.0f Kč</div>
+          %s
         </td>
-      </tr>`, borderBottom, imgTag, price, statusBadge))
+      </tr>`, borderBottom, imgTag, price, statusText))
 	}
 
 	bodyIntro := replaceVariables(tmpl.BodyIntro, vars)
@@ -438,11 +432,11 @@ func RenderSaleSummaryEmail(app core.App, user *core.Record, event *core.Record,
 	contentHTML := fmt.Sprintf(`
     <div>%s</div>
     %s
-    <div style="margin: 20px 0 10px 0;">
+    <div style="margin: 24px 0 10px 0;">
       <div style="font-size: 12px; font-weight: 900; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px; color: #000000;">
         Přehled tvých učebnic v burze
       </div>
-      <table role="presentation" width="100%%" border="0" cellspacing="0" cellpadding="0" style="border: 2px solid #000000; background-color: #ffffff;">
+      <table role="presentation" width="100%%" border="0" cellspacing="0" cellpadding="0" style="background-color: #ffffff;">
         %s
       </table>
     </div>
