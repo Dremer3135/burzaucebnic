@@ -290,7 +290,7 @@ func ensureSchema(app core.App) error {
 				MaxSelect: 1,
 				MaxSize:   10485760,
 				MimeTypes: []string{"image/jpeg", "image/png", "image/webp"},
-				Thumbs:    []string{"100x150"},
+				Thumbs:    []string{"100x150", "120x160"},
 			},
 			&core.SelectField{
 				Name: "status",

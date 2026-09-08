@@ -86,7 +86,7 @@ func LoadEmailTemplate(app core.App, key string) EmailTemplateData {
 
 func getBaseAppURL(app core.App) string {
 	baseURL := strings.TrimRight(app.Settings().Meta.AppURL, "/")
-	if baseURL == "" {
+	if baseURL == "" || strings.Contains(baseURL, "localhost") || strings.Contains(baseURL, "127.0.0.1") {
 		baseURL = "https://burza.skrat.org"
 	}
 	return baseURL
@@ -115,7 +115,7 @@ func replaceVariables(text string, vars map[string]string) string {
 func renderBookPhotoHTML(baseURL string, b *core.Record) string {
 	photo := b.GetString("photo")
 	if photo != "" {
-		imgURL := fmt.Sprintf("%s/api/files/books/%s/%s?thumb=120x160", baseURL, b.Id, photo)
+		imgURL := fmt.Sprintf("%s/api/files/books/%s/%s?thumb=100x150", baseURL, b.Id, photo)
 		return fmt.Sprintf(`<img src="%s" width="60" height="85" style="display: block; border: 1px solid #000000; object-fit: cover; background-color: #f4f4f5;" alt="" />`, imgURL)
 	}
 	return `<div style="width: 60px; height: 85px; background-color: #f4f4f5; border: 1px solid #000000; text-align: center; line-height: 85px; font-size: 10px; color: #71717a; font-weight: bold;">Bez fota</div>`
@@ -124,7 +124,7 @@ func renderBookPhotoHTML(baseURL string, b *core.Record) string {
 func renderUnacceptedBookPhotoHTML(baseURL string, b *core.Record) string {
 	photo := b.GetString("photo")
 	if photo != "" {
-		imgURL := fmt.Sprintf("%s/api/files/books/%s/%s?thumb=120x160", baseURL, b.Id, photo)
+		imgURL := fmt.Sprintf("%s/api/files/books/%s/%s?thumb=100x150", baseURL, b.Id, photo)
 		return fmt.Sprintf(`<img src="%s" width="60" height="85" style="display: block; border: 1px solid #ea580c; object-fit: cover; background-color: #fff7ed;" alt="" />`, imgURL)
 	}
 	return `<div style="width: 60px; height: 85px; background-color: #ffedd5; border: 1px solid #ea580c; text-align: center; line-height: 85px; font-size: 10px; color: #9a3412; font-weight: bold;">Bez fota</div>`

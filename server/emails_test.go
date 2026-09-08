@@ -249,3 +249,69 @@ func TestEmailEndpointsRequireCashierAuth(t *testing.T) {
 	}
 	scenarioCashierAllowed.Test(t)
 }
+
+func TestRenderEmailImageUrlsAndThumbnails(t *testing.T) {
+	testApp := testAppFactory(t)
+	defer testApp.Cleanup()
+	_ = ensureSchema(testApp)
+
+	// Verify getBaseAppURL fallback logic
+	testApp.Settings().Meta.AppURL = "http://localhost:8090"
+	if url := getBaseAppURL(testApp); url != "https://burza.skrat.org" {
+		t.Errorf("Expected fallback for localhost, got: %s", url)
+	}
+
+	testApp.Settings().Meta.AppURL = "http://127.0.0.1:8090"
+	if url := getBaseAppURL(testApp); url != "https://burza.skrat.org" {
+		t.Errorf("Expected fallback for 127.0.0.1, got: %s", url)
+	}
+
+	testApp.Settings().Meta.AppURL = ""
+	if url := getBaseAppURL(testApp); url != "https://burza.skrat.org" {
+		t.Errorf("Expected fallback for empty AppURL, got: %s", url)
+	}
+
+	testApp.Settings().Meta.AppURL = "https://custom.burzaucebnic.cz/"
+	if url := getBaseAppURL(testApp); url != "https://custom.burzaucebnic.cz" {
+		t.Errorf("Expected custom URL preserved, got: %s", url)
+	}
+
+	// Reset to localhost to verify RenderIntakeRecapEmail uses fallback
+	testApp.Settings().Meta.AppURL = "http://localhost:8090"
+
+	usersColl, _ := testApp.FindCollectionByNameOrId("users")
+	booksColl, _ := testApp.FindCollectionByNameOrId("books")
+	eventsColl, _ := testApp.FindCollectionByNameOrId("events")
+
+	event := core.NewRecord(eventsColl)
+	event.Set("name", "Test Event")
+
+	user := core.NewRecord(usersColl)
+	user.SetEmail("seller@burza.cz")
+	user.Set("name", "Jan Novák")
+
+	book := core.NewRecord(booksColl)
+	book.Id = "booktest1234567"
+	book.Set("price", 150)
+	book.Set("accepted", true)
+	book.Set("photo", "sample_photo.jpg")
+
+	_, htmlBody, err := RenderIntakeRecapEmail(testApp, user, event, []*core.Record{book}, nil, nil)
+	if err != nil {
+		t.Fatalf("RenderIntakeRecapEmail failed: %v", err)
+	}
+
+	// Must use valid thumbnail parameter
+	if !strings.Contains(htmlBody, "sample_photo.jpg?thumb=100x150") {
+		t.Errorf("Expected image URL with ?thumb=100x150, got body:\n%s", htmlBody)
+	}
+	// Must not have localhost
+	if strings.Contains(htmlBody, "localhost") || strings.Contains(htmlBody, "127.0.0.1") {
+		t.Errorf("Rendered email should not contain localhost or 127.0.0.1 links")
+	}
+	// Must use public domain fallback
+	if !strings.Contains(htmlBody, "https://burza.skrat.org/api/files/books/booktest1234567/sample_photo.jpg?thumb=100x150") {
+		t.Errorf("Expected public image URL in email body")
+	}
+}
+
