@@ -214,6 +214,7 @@ func ensureSchema(app core.App) error {
 		eventsColl.Fields.Add(
 			&core.TextField{Name: "name", Required: true},
 			&core.BoolField{Name: "active"},
+			&core.BoolField{Name: "maintenance_break"},
 			&core.SelectField{
 				Name:      "defaultPage",
 				Values:    []string{"sell", "seeprice"},
@@ -233,6 +234,10 @@ func ensureSchema(app core.App) error {
 				eventsColl.Fields.RemoveByName(f)
 				changed = true
 			}
+		}
+		if eventsColl.Fields.GetByName("maintenance_break") == nil {
+			eventsColl.Fields.Add(&core.BoolField{Name: "maintenance_break"})
+			changed = true
 		}
 		if eventsColl.Fields.GetByName("defaultPage") == nil {
 			eventsColl.Fields.Add(&core.SelectField{

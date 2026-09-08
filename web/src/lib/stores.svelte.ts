@@ -138,6 +138,10 @@ class EventStore {
 		return !this.event?.active;
 	}
 
+	isMaintenance(): boolean {
+		return !!(this.event?.maintenance_break ?? (this.event as any)?.maintenence_break);
+	}
+
 	getDefaultRoute(): string {
 		if (!this.event || !this.event.active) return '/';
 		return this.event.defaultPage === 'seeprice' ? '/seeprice' : '/sell';

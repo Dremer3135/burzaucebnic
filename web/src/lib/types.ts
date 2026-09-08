@@ -20,6 +20,7 @@ export interface Event {
 	bankAccount?: string;
 	iban?: string;
 	currency: string;
+	maintenance_break?: boolean;
 }
 
 export type BookStatus = 'available' | 'checkout' | 'bought';

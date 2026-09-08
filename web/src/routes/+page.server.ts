@@ -1,8 +1,16 @@
 import { redirect } from '@sveltejs/kit';
 import type { PageServerLoad } from './$types';
+import { isMaintenanceBreakActive } from '$lib/server/maintenance';
 
 export const load: PageServerLoad = async ({ locals }) => {
 	if (locals.user) {
+		if (!locals.user.isCashier) {
+			const isMaintenance = await isMaintenanceBreakActive(locals.pb);
+			if (isMaintenance) {
+				throw redirect(307, '/maintenance');
+			}
+		}
+
 		let targetRoute: string | null = null;
 		try {
 			const events = await locals.pb.collection('events').getFullList({

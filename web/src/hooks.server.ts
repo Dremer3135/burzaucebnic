@@ -1,6 +1,27 @@
 import PocketBase from 'pocketbase';
-import type { Handle } from '@sveltejs/kit';
+import type { Handle, RequestEvent } from '@sveltejs/kit';
 import type { User } from '$lib/types';
+import { isMaintenanceBreakActive } from '$lib/server/maintenance';
+
+function createRedirectResponse(targetPath: string, event: RequestEvent): Response {
+	const response = new Response(null, {
+		status: 307,
+		headers: {
+			Location: targetPath
+		}
+	});
+
+	response.headers.append(
+		'set-cookie',
+		event.locals.pb.authStore.exportToCookie({
+			httpOnly: false,
+			sameSite: 'lax',
+			path: '/'
+		})
+	);
+
+	return response;
+}
 
 export const handle: Handle = async ({ event, resolve }) => {
 	const pbPort = process.env.PB_PORT || '8090';
@@ -22,6 +43,41 @@ export const handle: Handle = async ({ event, resolve }) => {
 	}
 
 	event.locals.user = (event.locals.pb.authStore.record as unknown as User) || null;
+
+	const pathname = event.url.pathname;
+	const user = event.locals.user;
+
+	// Ignore internal system and asset requests
+	const isAssetOrSystemPath =
+		pathname.startsWith('/_app/') ||
+		pathname.startsWith('/api/') ||
+		pathname.startsWith('/_/') ||
+		pathname === '/favicon.svg' ||
+		pathname === '/skrat_logo.svg';
+
+	if (!isAssetOrSystemPath) {
+		// 1. Unauthenticated users: can ONLY access / and public legal terms
+		if (!user) {
+			if (pathname !== '/' && pathname !== '/terms' && pathname !== '/privacy') {
+				return createRedirectResponse('/', event);
+			}
+		} else if (!user.isCashier) {
+			// 2. Logged-in regular students:
+			const isMaintenance = await isMaintenanceBreakActive(event.locals.pb);
+			if (isMaintenance) {
+				// During maintenance, students cannot access functional pages; redirect to /maintenance
+				if (pathname !== '/maintenance') {
+					return createRedirectResponse('/maintenance', event);
+				}
+			} else {
+				// If maintenance break is not active, redirect away from /maintenance
+				if (pathname === '/maintenance') {
+					return createRedirectResponse('/', event);
+				}
+			}
+		}
+		// 3. Cashiers (user.isCashier === true) are completely unaffected
+	}
 
 	const response = await resolve(event);
 

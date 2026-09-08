@@ -5,9 +5,15 @@
 	import { Tag, ScanLine, Clock, ShieldCheck, RefreshCw } from '@lucide/svelte';
 
 	function redirectToDefaultPage() {
-		if (auth.user && eventStore.isMarketActive() && eventStore.event) {
-			const target = eventStore.event.defaultPage === 'seeprice' ? '/seeprice' : '/sell';
-			goto(target);
+		if (auth.user) {
+			if (eventStore.isMaintenance() && !auth.isCashier) {
+				goto('/maintenance');
+				return;
+			}
+			if (eventStore.isMarketActive() && eventStore.event) {
+				const target = eventStore.event.defaultPage === 'seeprice' ? '/seeprice' : '/sell';
+				goto(target);
+			}
 		}
 	}
 

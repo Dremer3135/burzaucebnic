@@ -227,3 +227,27 @@ func TestApiEndpoints(t *testing.T) {
 		})
 	}
 }
+
+func TestEventsCollectionHasMaintenanceBreak(t *testing.T) {
+	testApp := testAppFactory(t)
+	defer testApp.Cleanup()
+
+	if err := ensureSchema(testApp); err != nil {
+		t.Fatalf("ensureSchema failed: %v", err)
+	}
+
+	eventsColl, err := testApp.FindCollectionByNameOrId("events")
+	if err != nil {
+		t.Fatalf("events collection not found: %v", err)
+	}
+
+	field := eventsColl.Fields.GetByName("maintenance_break")
+	if field == nil {
+		t.Fatalf("expected maintenance_break field on events collection, got nil")
+	}
+
+	if field.Type() != core.FieldTypeBool {
+		t.Fatalf("expected maintenance_break to be bool field, got %s", field.Type())
+	}
+}
+
