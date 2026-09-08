@@ -77,3 +77,31 @@ export interface Payment {
 		cashier?: User;
 	};
 }
+
+export interface EmailTemplate {
+	id: string;
+	key: 'intake_recap' | 'sale_summary';
+	name: string;
+	subject: string;
+	bodyIntro: string;
+	unacceptedWarning?: string;
+	payoutBankNote: string;
+	payoutCashNote: string;
+	bodyOutro: string;
+	created?: string;
+	updated?: string;
+}
+
+export interface EmailCampaignStats {
+	activeEvent: {
+		id: string;
+		name: string;
+	} | null;
+	totalSellers: number;
+	totalBooks: number;
+	acceptedBooks: number;
+	unacceptedBooks: number;
+	soldBooks: number;
+	totalPayout: number;
+}
+

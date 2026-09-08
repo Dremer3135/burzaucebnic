@@ -13,6 +13,7 @@
 		if (currentPath === '/cashier') return 'POKLADNA';
 		if (currentPath === '/cashier/accept') return 'PŘÍJEM';
 		if (currentPath === '/cashier/payments') return 'PLATBY';
+		if (currentPath === '/cashier/emails') return 'E-MAILY';
 		return 'PRODEJ';
 	});
 </script>
@@ -108,6 +109,18 @@
 							>
 								<span>PLATBY</span>
 								{#if currentPath === '/cashier/payments'}
+									<span class="text-[10px]">•</span>
+								{/if}
+							</a>
+							<a
+								href="/cashier/emails"
+								onclick={() => (isDropdownOpen = false)}
+								class="px-3 py-2 text-xs font-black uppercase tracking-wider transition-colors flex items-center justify-between {currentPath === '/cashier/emails'
+									? 'bg-black text-white'
+									: 'text-black hover:bg-neutral-100'}"
+							>
+								<span>E-MAILY</span>
+								{#if currentPath === '/cashier/emails'}
 									<span class="text-[10px]">•</span>
 								{/if}
 							</a>

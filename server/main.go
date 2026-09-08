@@ -470,6 +470,11 @@ func ensureSchema(app core.App) error {
 		_, _ = app.DB().NewQuery("UPDATE users SET emailVisibility = 1").Execute()
 	}
 
+	// 5. Ensure email_templates collection
+	if err := EnsureEmailTemplatesSchema(app); err != nil {
+		return err
+	}
+
 	return nil
 }
 
@@ -650,11 +655,18 @@ func seedInitialData(app core.App) error {
 		}
 	}
 
+	// 4. Seed default email templates
+	if err := SeedDefaultEmailTemplates(app); err != nil {
+		log.Printf("[SEED] Error seeding email templates: %v", err)
+	}
+
 	return nil
 }
 
 // registerApiEndpoints registers custom API routes
 func registerApiEndpoints(e *core.ServeEvent) {
+	registerEmailEndpoints(e)
+
 	// GET /api/check-book-code?code={code} - Fast check if code is available for registering a new book
 	e.Router.GET("/api/check-book-code", func(c *core.RequestEvent) error {
 		authRecord := c.Auth
