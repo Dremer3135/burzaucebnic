@@ -5,8 +5,10 @@
 
 	let errorMessage = $state('');
 	let isSubmitting = $state(false);
+	let agreedToTerms = $state(false);
 
 	async function handleGoogleLogin() {
+		if (!agreedToTerms) return;
 		errorMessage = '';
 		isSubmitting = true;
 		try {
@@ -21,6 +23,7 @@
 	}
 
 	async function quickLogin(targetEmail: string) {
+		agreedToTerms = true;
 		errorMessage = '';
 		isSubmitting = true;
 		try {
@@ -51,12 +54,53 @@
 		</div>
 	{/if}
 
+	<!-- Agreement to terms and privacy notice -->
+	<div class="mb-5">
+		<label class="flex items-start gap-2.5 cursor-pointer select-none text-xs text-neutral-800 leading-snug">
+			<input
+				type="checkbox"
+				bind:checked={agreedToTerms}
+				class="w-4 h-4 mt-0.5 accent-black rounded-none border-2 border-black cursor-pointer shrink-0"
+			/>
+			<span>
+				Souhlasím s
+				<a
+					href="/terms"
+					target="_blank"
+					rel="noopener noreferrer"
+					class="font-black underline text-black hover:text-neutral-600 inline-flex items-center gap-0.5"
+				>
+					<span>pravidly burzy</span>
+					<svg class="w-3 h-3 inline-block shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+						<path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>
+						<polyline points="15 3 21 3 21 9"></polyline>
+						<line x1="10" y1="14" x2="21" y2="3"></line>
+					</svg>
+				</a>
+				a beru na vědomí
+				<a
+					href="/privacy"
+					target="_blank"
+					rel="noopener noreferrer"
+					class="font-black underline text-black hover:text-neutral-600 inline-flex items-center gap-0.5"
+				>
+					<span>zpracování osobních údajů</span>
+					<svg class="w-3 h-3 inline-block shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+						<path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>
+						<polyline points="15 3 21 3 21 9"></polyline>
+						<line x1="10" y1="14" x2="21" y2="3"></line>
+					</svg>
+				</a>.
+			</span>
+		</label>
+	</div>
+
 	<!-- Google Button (Sole Login Method) -->
 	<button
 		type="button"
 		onclick={handleGoogleLogin}
-		disabled={isSubmitting}
-		class="w-full flex items-center justify-center gap-2.5 py-3.5 px-4 bg-black text-white font-black text-xs uppercase tracking-wider border-2 border-black hover:bg-neutral-800 active:scale-98 transition-all disabled:opacity-50 cursor-pointer"
+		disabled={!agreedToTerms || isSubmitting}
+		class="w-full flex items-center justify-center gap-2.5 py-3.5 px-4 bg-black text-white font-black text-xs uppercase tracking-wider border-2 border-black hover:bg-neutral-800 active:scale-98 transition-all disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
 	>
 		<svg class="w-4 h-4 shrink-0" viewBox="0 0 24 24">
 			<path

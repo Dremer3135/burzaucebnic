@@ -29,8 +29,17 @@
 			<span class="text-xs font-black uppercase text-neutral-400">Načítám stav burzy...</span>
 		</div>
 	{:else if !auth.user}
-		<div class="w-full flex justify-center py-6">
+		<div class="w-full flex flex-col items-center justify-center py-6">
 			<LoginModal onsuccess={handleLoginSuccess} />
+			<footer class="mt-4 flex items-center justify-center gap-3 text-[11px] font-bold text-neutral-500 uppercase tracking-wider">
+				<a href="/terms" target="_blank" rel="noopener noreferrer" class="hover:text-black hover:underline transition-colors">
+					Pravidla burzy ↗
+				</a>
+				<span>•</span>
+				<a href="/privacy" target="_blank" rel="noopener noreferrer" class="hover:text-black hover:underline transition-colors">
+					Zpracování údajů (GDPR) ↗
+				</a>
+			</footer>
 		</div>
 	{:else}
 		<div class="max-w-md w-full bg-white border-2 border-black p-6 text-center shadow-none">
