@@ -15,8 +15,11 @@
 	import type { Book, CodeStatus } from '$lib/types';
 
 	let isModalOpen = $state(false);
-	// Steps: 'SCAN_CODE' | 'CAPTURE_COVER' | 'ENTER_PRICE'
-	let step = $state<'SCAN_CODE' | 'CAPTURE_COVER' | 'ENTER_PRICE'>('SCAN_CODE');
+	// Steps: 'SCAN_CODE' | 'CAPTURE_COVER' | 'ENTER_PRICE' | 'SUCCESS_WRITE_PRICE'
+	let step = $state<'SCAN_CODE' | 'CAPTURE_COVER' | 'ENTER_PRICE' | 'SUCCESS_WRITE_PRICE'>('SCAN_CODE');
+
+	let submittedPrice = $state<number>(0);
+	let submittedCode = $state<string>('');
 
 	let scannedCode = $state('');
 	let activeDetectedCode = $state<string | null>(null);
@@ -362,6 +365,27 @@
 		}
 	}
 
+	function addAnotherBook() {
+		step = 'SCAN_CODE';
+		scannedCode = '';
+		activeDetectedCode = null;
+		activeMatch = null;
+		activeCodeStatus = 'checking';
+		lastSeenCodeTime = 0;
+		lastVibratedStatus = null;
+		trackedMatches.clear();
+		priceInput = '';
+		capturedPhotoBlob = null;
+		if (photoPreviewUrl) URL.revokeObjectURL(photoPreviewUrl);
+		photoPreviewUrl = null;
+		errorMessage = '';
+		setTimeout(startCamera, 50);
+	}
+
+	function finishSelling() {
+		closeSellModal();
+	}
+
 	async function submitBook(e: SubmitEvent) {
 		e.preventDefault();
 		if (!auth.user || !scannedCode || !capturedPhotoBlob || !priceInput || priceInput <= 0) {
@@ -417,8 +441,10 @@
 				status: 'available'
 			});
 
+			submittedPrice = Number(priceInput);
+			submittedCode = cleanCode;
+			step = 'SUCCESS_WRITE_PRICE';
 			await sellerBooks.refresh();
-			closeSellModal();
 		} catch (err: any) {
 			console.error('Book submission error', err);
 			const msg = String(err?.message || '').toLowerCase();
@@ -582,7 +608,7 @@
 		<!-- Top Bar -->
 		<div class="flex items-center justify-between px-4 py-3 bg-white border-b-2 border-black z-10 text-black">
 			<div class="flex items-center gap-2">
-				{#if step !== 'SCAN_CODE'}
+				{#if step !== 'SCAN_CODE' && step !== 'SUCCESS_WRITE_PRICE'}
 					<button
 						onclick={step === 'ENTER_PRICE' ? retakePhoto : rescanCode}
 						class="p-1.5 border-2 border-black bg-white hover:bg-neutral-100 text-black cursor-pointer"
@@ -592,10 +618,12 @@
 				{/if}
 				<h2 class="text-sm font-black uppercase tracking-wider text-black">
 					{step === 'SCAN_CODE'
-						? '1/3 Naskenujte Data Matrix'
+						? '1/3 Naskenujte kód z knihy'
 						: step === 'CAPTURE_COVER'
 							? '2/3 Vyfoťte obálku knihy'
-							: '3/3 Zadejte cenu učebnice'}
+							: step === 'ENTER_PRICE'
+								? '3/3 Zadejte cenu učebnice'
+								: 'Kniha úspěšně vystavena'}
 				</h2>
 			</div>
 
@@ -614,13 +642,22 @@
 				playsinline
 				autoplay
 				muted
-				class="w-full h-full object-cover {step === 'ENTER_PRICE' ? 'hidden' : 'block'}"
+				class="w-full h-full object-cover {step === 'ENTER_PRICE' || step === 'SUCCESS_WRITE_PRICE' ? 'hidden' : 'block'}"
 			></video>
 
 			<canvas bind:this={canvasElement} class="hidden"></canvas>
 
 			<!-- STEP 1 OVERLAY -->
 			{#if step === 'SCAN_CODE'}
+				<!-- Guidance Instruction Banner -->
+				<div class="absolute top-3 inset-x-3 z-20 flex justify-center pointer-events-none">
+					<div class="bg-white border-2 border-black px-3 py-2 max-w-sm w-full text-center shadow-[2px_2px_0px_0px_rgba(0,0,0,1)]">
+						<p class="text-xs font-black uppercase tracking-wide text-black">
+							1. Nalepte nálepku do pravého horního rohu knihy a naskenujte kód
+						</p>
+					</div>
+				</div>
+
 				<canvas
 					bind:this={overlayCanvas}
 					class="absolute inset-0 pointer-events-none w-full h-full z-10"
@@ -704,6 +741,15 @@
 
 			<!-- STEP 2 OVERLAY -->
 			{#if step === 'CAPTURE_COVER'}
+				<!-- Guidance Instruction Banner -->
+				<div class="absolute top-3 inset-x-3 z-20 flex justify-center pointer-events-none">
+					<div class="bg-white border-2 border-black px-3 py-2 max-w-sm w-full text-center shadow-[2px_2px_0px_0px_rgba(0,0,0,1)]">
+						<p class="text-xs font-black uppercase tracking-wide text-black">
+							2. Vyfoťte obálku učebnice
+						</p>
+					</div>
+				</div>
+
 				<div class="absolute inset-0 pointer-events-none flex flex-col items-center justify-center">
 					<div class="w-[70vw] max-w-xs aspect-[1/1.4] border-4 border-white relative">
 						<div class="absolute -top-4 left-1/2 -translate-x-1/2 bg-white text-black border-2 border-black text-xs font-black uppercase px-3 py-0.5">
@@ -744,6 +790,9 @@
 						</div>
 
 						<div class="w-full bg-white p-5 border-4 border-black">
+							<div class="inline-block px-2 py-0.5 bg-black text-white text-[10px] font-black uppercase tracking-wider mb-3">
+								3. Zadejte cenu
+							</div>
 							<div class="text-xs font-black uppercase text-neutral-600 mb-1">KÓD DATA MATRIX:</div>
 							<div class="text-sm font-mono font-black text-black mb-4 bg-neutral-100 px-3 py-2 border-2 border-black">
 								{scannedCode}
@@ -792,6 +841,72 @@
 									{/if}
 								</button>
 							</form>
+						</div>
+					</div>
+				</div>
+			{/if}
+
+			<!-- STEP 4: SUCCESS AND WRITE PRICE PROMPT -->
+			{#if step === 'SUCCESS_WRITE_PRICE'}
+				<div class="absolute inset-0 bg-white flex flex-col p-4 overflow-y-auto text-black z-30">
+					<div class="flex-1 flex flex-col items-center justify-center max-w-sm mx-auto w-full py-4">
+						<!-- Success badge -->
+						<div class="w-14 h-14 bg-emerald-600 text-white flex items-center justify-center border-2 border-black mb-3 shadow-[3px_3px_0px_0px_rgba(0,0,0,1)]">
+							<Check class="w-8 h-8 stroke-[3]" />
+						</div>
+
+						<h3 class="text-lg sm:text-xl font-black uppercase tracking-tight text-center text-black mb-1">
+							Kniha úspěšně vystavena!
+						</h3>
+						<p class="text-xs text-neutral-500 font-mono mb-4 text-center">
+							Kód: <span class="font-bold text-black">{submittedCode}</span>
+						</p>
+
+						<!-- Critical Instruction Callout Box -->
+						<div class="w-full bg-amber-100 border-2 border-black p-4 mb-5 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] text-center">
+							<div class="inline-block px-2 py-0.5 bg-black text-white text-[10px] font-black uppercase tracking-wider mb-2">
+								Nezapomeňte napsat cenu!
+							</div>
+							<p class="text-sm font-black text-black leading-snug mb-3">
+								Nyní napište cenu <span class="text-base text-black bg-amber-300 px-1.5 py-0.5 border border-black">{submittedPrice} Kč</span> na volné bílé místo na nálepce (pod barevnou linkou).
+							</p>
+
+							<!-- Sticker illustration -->
+							<div class="bg-white border-2 border-black p-3 max-w-[220px] mx-auto text-center shadow-xs">
+								<div class="flex items-center justify-center gap-2 mb-1">
+									<div class="w-6 h-6 bg-neutral-900 flex items-center justify-center text-white text-[8px] font-mono">
+										:::
+									</div>
+									<span class="text-[10px] font-mono font-bold text-neutral-600 truncate">{submittedCode}</span>
+								</div>
+								<!-- Colored divider line -->
+								<div class="h-1 bg-gradient-to-r from-emerald-500 via-blue-500 to-purple-500 w-full my-1"></div>
+								<!-- Handwritten price box -->
+								<div class="py-1 bg-neutral-50 border border-dashed border-black">
+									<span class="text-[9px] text-neutral-400 block font-bold uppercase">volné bílé místo</span>
+									<span class="text-lg font-black text-black font-mono tracking-tight">{submittedPrice} Kč</span>
+								</div>
+							</div>
+						</div>
+
+						<!-- Action Buttons -->
+						<div class="w-full space-y-2">
+							<button
+								type="button"
+								onclick={addAnotherBook}
+								class="w-full py-3.5 px-4 bg-black text-white hover:bg-neutral-800 active:bg-neutral-900 font-black text-xs uppercase tracking-wider border-2 border-black flex items-center justify-center gap-2 cursor-pointer shadow-[3px_3px_0px_0px_rgba(0,0,0,1)] active:translate-x-0.5 active:translate-y-0.5 active:shadow-none transition-all"
+							>
+								<Plus class="w-4 h-4" />
+								<span>PŘIDAT DALŠÍ KNIHU</span>
+							</button>
+
+							<button
+								type="button"
+								onclick={finishSelling}
+								class="w-full py-3 px-4 bg-white text-black hover:bg-neutral-100 font-black text-xs uppercase tracking-wider border-2 border-black flex items-center justify-center gap-2 cursor-pointer transition-colors"
+							>
+								<span>HOTOVO</span>
+							</button>
 						</div>
 					</div>
 				</div>

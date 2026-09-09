@@ -2,11 +2,15 @@
 	import { goto } from '$app/navigation';
 	import { page } from '$app/stores';
 	import { auth } from '$lib/stores.svelte';
-	import { LogOut, BookOpen, ChevronDown } from '@lucide/svelte';
+	import { BookOpen, ChevronDown, Menu } from '@lucide/svelte';
+	import Sidebar from '$lib/components/Sidebar.svelte';
+	import PayoutSettingsModal from '$lib/components/PayoutSettingsModal.svelte';
 
 	let currentPath = $derived($page.url.pathname);
 	let isCashier = $derived(auth.isCashier);
 	let isDropdownOpen = $state(false);
+	let isSidebarOpen = $state(false);
+	let isPayoutModalOpen = $state(false);
 
 	let activeModeLabel = $derived.by(() => {
 		if (currentPath === '/seeprice') return 'CENA';
@@ -130,20 +134,18 @@
 			</div>
 		{/if}
 
-		<!-- Right: Logout (when logged in) or "by [logo]" (on login page) -->
+		<!-- Right: Menu (when logged in) or "by [logo]" (on login page) -->
 		<div class="flex items-center gap-1.5 shrink-0">
 			{#if auth.user}
 				<button
-					onclick={async () => {
-						auth.logout();
-						await goto('/');
-					}}
-					class="p-2 border-2 border-black bg-white text-black hover:bg-black hover:text-white transition-colors cursor-pointer flex items-center justify-center gap-1"
-					title="Odhlásit se ({auth.user.email})"
-					aria-label="Odhlásit se"
+					onclick={() => (isSidebarOpen = true)}
+					class="p-2 border-2 border-black bg-white text-black hover:bg-neutral-100 transition-colors cursor-pointer flex items-center justify-center gap-1.5"
+					title="Otevřít menu ({auth.user.email})"
+					aria-label="Otevřít menu"
+					aria-expanded={isSidebarOpen}
 				>
-					<LogOut class="w-4 h-4" />
-					<span class="hidden md:inline text-xs font-bold uppercase tracking-wider">ODHLÁSIT</span>
+					<Menu class="w-4 h-4" />
+					<span class="hidden md:inline text-xs font-black uppercase tracking-wider">MENU</span>
 				</button>
 			{:else}
 				<a
@@ -160,4 +162,14 @@
 		</div>
 	</div>
 </header>
+
+{#if auth.user}
+	<Sidebar
+		bind:open={isSidebarOpen}
+		onopenPayout={() => (isPayoutModalOpen = true)}
+	/>
+	<PayoutSettingsModal
+		bind:open={isPayoutModalOpen}
+	/>
+{/if}
 
