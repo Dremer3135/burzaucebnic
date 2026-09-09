@@ -12,6 +12,7 @@
 		type ScanMatch
 	} from '$lib/scanner';
 	import { Plus, Camera, Check, X, Tag, AlertCircle, RefreshCw, ChevronLeft, AlertTriangle } from '@lucide/svelte';
+	import { renderDataMatrix } from '$lib/barcodes';
 	import type { Book, CodeStatus } from '$lib/types';
 
 	let isModalOpen = $state(false);
@@ -67,6 +68,16 @@
 
 	let errorMessage = $state('');
 	let isSubmitting = $state(false);
+
+	let successBarcodeCanvas = $state<HTMLCanvasElement | null>(null);
+
+	$effect(() => {
+		if (step === 'SUCCESS_WRITE_PRICE' && successBarcodeCanvas && submittedCode) {
+			renderDataMatrix(successBarcodeCanvas, submittedCode, 4).catch((err) => {
+				console.error('Failed to render barcode canvas', err);
+			});
+		}
+	});
 
 	// Full-res preview modal
 	let selectedPreviewBook = $state<Book | null>(null);
@@ -282,20 +293,27 @@
 				for (const [code, item] of trackedMatches.entries()) {
 					if (now - item.lastSeen < 450) {
 						const status = getCodeStatus(code);
+						const isSelected = code === activeDetectedCode;
+
 						// Do not highlight unavailable/used/user/invalid codes if they are not the active/selected one
-						if ((status === 'used' || status === 'user' || status === 'invalid') && code !== activeDetectedCode) {
+						if ((status === 'used' || status === 'user' || status === 'invalid') && !isSelected) {
 							continue;
 						}
 
-						let color = '#10b981'; // Green for available
-						if (status === 'used' || status === 'user' || status === 'invalid') {
-							color = '#ef4444'; // Red for used, user or invalid
-						} else if (status === 'checking') {
-							color = '#f59e0b'; // Amber for checking
-						}
+						if (isSelected) {
+							let color = '#10b981'; // Green for selected available
+							if (status === 'used' || status === 'user' || status === 'invalid') {
+								color = '#ef4444'; // Red for used, user or invalid
+							} else if (status === 'checking') {
+								color = '#f59e0b'; // Amber for checking
+							}
 
-						drawBoundingBox(ctx, item.match.position, transform, color);
-						drawStatusTag(ctx, item.match.position, transform, status);
+							drawBoundingBox(ctx, item.match.position, transform, color, undefined, { lineWidth: 4, showCorners: true });
+							drawStatusTag(ctx, item.match.position, transform, status);
+						} else {
+							// Unselected available code: draw in subtle gray without status tag
+							drawBoundingBox(ctx, item.match.position, transform, '#9ca3af', undefined, { lineWidth: 2, showCorners: false });
+						}
 					}
 				}
 				ctx.restore();
@@ -868,23 +886,26 @@
 								Nezapomeňte napsat cenu!
 							</div>
 							<p class="text-sm font-black text-black leading-snug mb-3">
-								Nyní napište cenu <span class="text-base text-black bg-amber-300 px-1.5 py-0.5 border border-black">{submittedPrice} Kč</span> na volné bílé místo na nálepce (pod barevnou linkou).
+								Nyní napište cenu <span class="text-base text-black bg-amber-300 px-1.5 py-0.5 border border-black">{submittedPrice} Kč</span> na volné bílé místo na nálepce (přímo pod tmavě modrou linkou).
 							</p>
 
 							<!-- Sticker illustration -->
-							<div class="bg-white border-2 border-black p-3 max-w-[220px] mx-auto text-center shadow-xs">
-								<div class="flex items-center justify-center gap-2 mb-1">
-									<div class="w-6 h-6 bg-neutral-900 flex items-center justify-center text-white text-[8px] font-mono">
-										:::
+							<div class="bg-white border-2 border-black p-3 max-w-[280px] mx-auto text-left shadow-xs">
+								<div class="flex items-start gap-3">
+									<!-- Real Data Matrix Barcode Canvas -->
+									<div class="w-16 h-16 shrink-0 bg-white flex items-center justify-center border border-neutral-100 p-0.5">
+										<canvas bind:this={successBarcodeCanvas} class="w-full h-full object-contain"></canvas>
 									</div>
-									<span class="text-[10px] font-mono font-bold text-neutral-600 truncate">{submittedCode}</span>
-								</div>
-								<!-- Colored divider line -->
-								<div class="h-1 bg-gradient-to-r from-emerald-500 via-blue-500 to-purple-500 w-full my-1"></div>
-								<!-- Handwritten price box -->
-								<div class="py-1 bg-neutral-50 border border-dashed border-black">
-									<span class="text-[9px] text-neutral-400 block font-bold uppercase">volné bílé místo</span>
-									<span class="text-lg font-black text-black font-mono tracking-tight">{submittedPrice} Kč</span>
+									<div class="flex-1 min-w-0 pt-0.5">
+										<div class="font-mono text-xs font-bold text-black tracking-tight leading-tight truncate">
+											{submittedCode}
+										</div>
+										<div class="h-1 bg-[#054a6a] w-full mt-1"></div>
+										<div class="mt-2 pt-0.5 border border-dashed border-neutral-300 rounded bg-neutral-50 px-1.5 py-1 text-center">
+											<span class="text-[8px] font-black uppercase text-neutral-400 block tracking-wider">Sem napište cenu</span>
+											<span class="text-lg font-black text-black tracking-tight font-sans leading-none">{submittedPrice} Kč</span>
+										</div>
+									</div>
 								</div>
 							</div>
 						</div>

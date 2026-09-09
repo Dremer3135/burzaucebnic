@@ -168,7 +168,8 @@ export function drawBoundingBox(
 	pos: Position,
 	transformOrScaleX: VideoTransform | number,
 	scaleYOrColor?: number | string,
-	optionalColor?: string
+	optionalColor?: string,
+	options?: { lineWidth?: number; showCorners?: boolean }
 ) {
 	let scaleX: number;
 	let scaleY: number;
@@ -188,6 +189,9 @@ export function drawBoundingBox(
 		if (optionalColor) color = optionalColor;
 	}
 
+	const lineWidth = options?.lineWidth ?? 4;
+	const showCorners = options?.showCorners ?? true;
+
 	ctx.save();
 	ctx.beginPath();
 	ctx.moveTo(pos.topLeft.x * scaleX + offsetX, pos.topLeft.y * scaleY + offsetY);
@@ -196,22 +200,24 @@ export function drawBoundingBox(
 	ctx.lineTo(pos.bottomLeft.x * scaleX + offsetX, pos.bottomLeft.y * scaleY + offsetY);
 	ctx.closePath();
 
-	ctx.lineWidth = 4;
+	ctx.lineWidth = lineWidth;
 	ctx.strokeStyle = color;
 	ctx.fillStyle = color + '2a';
 	ctx.fill();
 	ctx.stroke();
 
 	// Draw sharp corner squares for minimalist sharp design
-	const points = [pos.topLeft, pos.topRight, pos.bottomRight, pos.bottomLeft];
-	ctx.fillStyle = '#ffffff';
-	for (const p of points) {
-		const px = p.x * scaleX + offsetX;
-		const py = p.y * scaleY + offsetY;
-		ctx.fillRect(px - 4, py - 4, 8, 8);
-		ctx.strokeStyle = color;
-		ctx.lineWidth = 2;
-		ctx.strokeRect(px - 4, py - 4, 8, 8);
+	if (showCorners) {
+		const points = [pos.topLeft, pos.topRight, pos.bottomRight, pos.bottomLeft];
+		ctx.fillStyle = '#ffffff';
+		for (const p of points) {
+			const px = p.x * scaleX + offsetX;
+			const py = p.y * scaleY + offsetY;
+			ctx.fillRect(px - 4, py - 4, 8, 8);
+			ctx.strokeStyle = color;
+			ctx.lineWidth = 2;
+			ctx.strokeRect(px - 4, py - 4, 8, 8);
+		}
 	}
 	ctx.restore();
 }
