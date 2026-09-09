@@ -890,23 +890,22 @@
 							</p>
 
 							<!-- Sticker illustration -->
-							<div class="bg-white border-2 border-black p-3 max-w-[280px] mx-auto text-left shadow-xs">
-								<div class="flex items-start gap-3">
+							<div class="bg-white border-2 border-black p-3 sm:p-3.5 max-w-[310px] mx-auto text-left shadow-xs">
+								<div class="flex items-start gap-2.5 sm:gap-3.5">
 									<!-- Real Data Matrix Barcode Canvas -->
-									<div class="w-16 h-16 shrink-0 bg-white flex items-center justify-center border border-neutral-100 p-0.5">
+									<div class="w-14 h-14 sm:w-16 sm:h-16 shrink-0 bg-white flex items-center justify-center border border-neutral-100 p-0.5">
 										<canvas bind:this={successBarcodeCanvas} class="w-full h-full object-contain"></canvas>
 									</div>
 									<div class="flex-1 min-w-0 pt-0.5">
-										<div class="font-mono text-xs font-bold text-black tracking-tight leading-tight truncate">
-											{submittedCode}
+										<div class="inline-block">
+											<div class="font-mono text-[10px] sm:text-[11px] font-bold text-black tracking-tight leading-none whitespace-nowrap">
+												{submittedCode}
+											</div>
+											<div class="h-0.5 sm:h-1 bg-[#054a6a] w-full mt-1 rounded-xs"></div>
 										</div>
-										<div class="h-1 bg-[#054a6a] w-full mt-1 rounded-xs"></div>
-										<div class="mt-1.5 text-center py-0.5">
-											<span class="text-xl font-black text-blue-900 font-serif italic tracking-tight block leading-none">
+										<div class="mt-2 text-center">
+											<span class="text-xl sm:text-2xl font-black text-black tracking-tight block leading-tight">
 												{submittedPrice} Kč
-											</span>
-											<span class="text-[8px] font-bold text-neutral-400 uppercase tracking-wider mt-0.5 block">
-												✍️ cena perem
 											</span>
 										</div>
 									</div>

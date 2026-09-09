@@ -193,10 +193,10 @@
 							<!-- Sticker Diagram -->
 							<div class="p-4 sm:p-5 bg-neutral-100 border-2 border-black max-w-sm mx-auto flex flex-col items-center gap-3">
 								<!-- Realistic Physical Sticker Card -->
-								<div class="w-full max-w-[270px] bg-white border-2 border-neutral-200 rounded shadow-[0_2px_8px_rgba(0,0,0,0.08)] p-3 relative">
-									<div class="flex items-start gap-3">
+								<div class="w-full max-w-[310px] bg-white border-2 border-neutral-200 rounded shadow-[0_2px_8px_rgba(0,0,0,0.08)] p-3 sm:p-3.5 relative">
+									<div class="flex items-start gap-2.5 sm:gap-3.5">
 										<!-- Left: Data Matrix SVG with quiet zone -->
-										<div class="w-18 h-18 shrink-0 bg-white">
+										<div class="w-14 h-14 sm:w-16 sm:h-16 shrink-0 bg-white">
 											<svg viewBox="0 0 72 72" xmlns="http://www.w3.org/2000/svg" class="w-full h-full">
 												<rect width="100%" height="100%" fill="#ffffff" />
 												<path d="M4 68L68 68L68 64L64 64L64 60L60 60L60 64L48 64L48 60L44 60L44 56L48 56L48 48L44 48L44 52L40 52L40 64L32 64L32 60L36 60L36 40L32 40L32 56L28 56L28 60L24 60L24 64L16 64L16 60L12 60L12 64L8 64L8 56L16 56L16 44L12 44L12 40L8 40L8 36L20 36L20 28L16 28L16 24L12 24L12 20L8 20L8 16L12 16L12 12L8 12L8 4L4 4ZM48 60L52 60L52 56L48 56ZM56 60L60 60L60 56L64 56L64 52L68 52L68 48L60 48L60 52L56 52ZM64 60L68 60L68 56L64 56ZM24 56L28 56L28 48L24 48ZM8 52L8 48L12 48L12 52ZM52 52L56 52L56 48L60 48L60 40L52 40L52 32L48 32L48 36L44 36L44 40L48 40L48 48L52 48ZM20 48L24 48L24 40L16 40L16 44L20 44ZM40 44L44 44L44 40L40 40ZM64 44L68 44L68 40L64 40ZM24 40L32 40L32 36L36 36L36 40L40 40L40 36L44 36L44 32L40 32L40 28L36 28L36 32L28 32L28 36L24 36ZM60 40L64 40L64 36L68 36L68 32L60 32L60 28L56 28L56 36L60 36ZM8 32L8 28L12 28L12 32ZM24 32L28 32L28 28L24 28ZM44 32L48 32L48 28L56 28L56 20L48 20L48 24L40 24L40 28L44 28ZM28 28L32 28L32 20L28 20L28 16L32 16L32 4L28 4L28 8L24 8L24 4L20 4L20 8L16 8L16 4L12 4L12 12L16 12L16 24L20 24L20 20L24 20L24 24L28 24ZM60 28L68 28L68 24L64 24L64 20L68 20L68 16L64 16L64 12L68 12L68 8L64 8L64 4L60 4L60 12L56 12L56 16L60 16ZM32 20L36 20L36 16L32 16ZM40 20L44 20L44 16L52 16L52 12L40 12L40 4L36 4L36 16L40 16ZM20 16L20 12L24 12L24 16ZM52 12L56 12L56 4L52 4ZM44 8L48 8L48 4L44 4Z" fill="#000000" fill-rule="evenodd" />
@@ -204,18 +204,17 @@
 										</div>
 										<!-- Right: Code + Teal line + Price Area -->
 										<div class="flex-1 min-w-0 pt-0.5">
-											<div class="font-mono text-xs font-bold text-black tracking-tight leading-tight select-all">
-												nhvlre22094812b
+											<div class="inline-block">
+												<div class="font-mono text-[10px] sm:text-[11px] font-bold text-black tracking-tight leading-none whitespace-nowrap">
+													nhvlre22094812b
+												</div>
+												<div class="h-0.5 sm:h-1 bg-[#054a6a] w-full mt-1 rounded-xs"></div>
 											</div>
-											<div class="h-1 bg-[#054a6a] w-full mt-1 rounded-xs"></div>
-											<!-- Clean handwriting price zone -->
-											<div class="mt-2 text-center py-1">
-												<span class="text-2xl font-black text-blue-900 tracking-tight font-serif italic inline-block">
+											<!-- Clean price zone -->
+											<div class="mt-2 text-center">
+												<span class="text-xl sm:text-2xl font-black text-black tracking-tight block leading-tight">
 													150 Kč
 												</span>
-												<div class="text-[9px] font-bold text-neutral-400 uppercase tracking-wide mt-0.5">
-													✍️ cena perem
-												</div>
 											</div>
 										</div>
 									</div>
@@ -316,7 +315,7 @@
 								Převzetí zakoupených knih
 							</h2>
 							<p class="text-xs text-neutral-700 leading-relaxed">
-								Jakmile je platba potvrzena na pokladně (nebo automaticky přes bankovní párování), knihy jsou vaše a můžete s nimi odejít.
+								Po odeslání platby na pokladně můžete s knihami rovnou odejít – nemusíte čekat na potvrzení připsání platby v systému. Pokud by nastal jakýkoliv problém s platbou, budeme vás kontaktovat e-mailem nebo osobně.
 							</p>
 						</div>
 					</div>
