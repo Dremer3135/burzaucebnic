@@ -12,6 +12,9 @@
 
 	$effect(() => {
 		if (auth.user && !auth.isCashier) {
+			if (import.meta.env.DEV && $page.url.pathname === '/tutorial') {
+				return;
+			}
 			if (eventStore.isMaintenance() && $page.url.pathname !== '/maintenance') {
 				goto('/maintenance');
 			} else if (!eventStore.isMaintenance() && $page.url.pathname === '/maintenance') {

@@ -38,6 +38,10 @@
 		<div class="w-full flex flex-col items-center justify-center py-6">
 			<LoginModal onsuccess={handleLoginSuccess} />
 			<footer class="mt-4 flex items-center justify-center gap-3 text-[11px] font-bold text-neutral-500 uppercase tracking-wider">
+				<a href="/tutorial" class="hover:text-black hover:underline transition-colors">
+					Návod k použití
+				</a>
+				<span>•</span>
 				<a href="/terms" target="_blank" rel="noopener noreferrer" class="hover:text-black hover:underline transition-colors">
 					Pravidla burzy ↗
 				</a>

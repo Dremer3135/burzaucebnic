@@ -56,12 +56,17 @@ export const handle: Handle = async ({ event, resolve }) => {
 		pathname === '/skrat_logo.svg';
 
 	if (!isAssetOrSystemPath) {
+		// In dev mode, /tutorial is always directly accessible without login or maintenance restrictions
+		if (import.meta.env.DEV && pathname === '/tutorial') {
+			return resolve(event);
+		}
+
 		// 1. Unauthenticated users: can ONLY access /, public legal terms, and tutorial
 		if (!user) {
 			if (pathname !== '/' && pathname !== '/terms' && pathname !== '/privacy' && pathname !== '/tutorial') {
 				return createRedirectResponse('/', event);
 			}
-			if (pathname === '/tutorial') {
+			if (pathname === '/tutorial' && !import.meta.env.DEV) {
 				const isMaintenance = await isMaintenanceBreakActive(event.locals.pb);
 				if (isMaintenance) {
 					return createRedirectResponse('/maintenance', event);

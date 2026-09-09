@@ -149,6 +149,12 @@
 				</button>
 			{:else}
 				<a
+					href="/tutorial"
+					class="px-2 py-1 text-[11px] font-black uppercase tracking-wider border border-black hover:bg-neutral-100 transition-colors"
+				>
+					Návod
+				</a>
+				<a
 					href="https://skrat.org"
 					target="_blank"
 					rel="noopener noreferrer"

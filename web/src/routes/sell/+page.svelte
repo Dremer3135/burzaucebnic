@@ -900,10 +900,14 @@
 										<div class="font-mono text-xs font-bold text-black tracking-tight leading-tight truncate">
 											{submittedCode}
 										</div>
-										<div class="h-1 bg-[#054a6a] w-full mt-1"></div>
-										<div class="mt-2 pt-0.5 border border-dashed border-neutral-300 rounded bg-neutral-50 px-1.5 py-1 text-center">
-											<span class="text-[8px] font-black uppercase text-neutral-400 block tracking-wider">Sem napište cenu</span>
-											<span class="text-lg font-black text-black tracking-tight font-sans leading-none">{submittedPrice} Kč</span>
+										<div class="h-1 bg-[#054a6a] w-full mt-1 rounded-xs"></div>
+										<div class="mt-1.5 text-center py-0.5">
+											<span class="text-xl font-black text-blue-900 font-serif italic tracking-tight block leading-none">
+												{submittedPrice} Kč
+											</span>
+											<span class="text-[8px] font-bold text-neutral-400 uppercase tracking-wider mt-0.5 block">
+												✍️ cena perem
+											</span>
 										</div>
 									</div>
 								</div>
