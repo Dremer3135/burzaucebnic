@@ -251,3 +251,163 @@ func TestEventsCollectionHasMaintenanceBreak(t *testing.T) {
 	}
 }
 
+func TestCashierSearchBooks(t *testing.T) {
+	testApp := testAppFactory(t)
+	defer testApp.Cleanup()
+
+	scenarios := []struct {
+		name           string
+		tokenUserEmail string
+		query          string
+		expectedStatus int
+		expectedBody   string
+	}{
+		{
+			name:           "search-books rejected without auth",
+			tokenUserEmail: "",
+			query:          "mat",
+			expectedStatus: http.StatusUnauthorized,
+			expectedBody:   "The request requires valid record authorization token.",
+		},
+		{
+			name:           "search-books rejected for regular non-cashier user",
+			tokenUserEmail: "seller@burza.cz",
+			query:          "mat",
+			expectedStatus: http.StatusForbidden,
+			expectedBody:   "Pouze pokladní má přístup",
+		},
+		{
+			name:           "search-books allowed for cashier and finds book",
+			tokenUserEmail: "cashier@burza.cz",
+			query:          "matgymn",
+			expectedStatus: http.StatusOK,
+			expectedBody:   "matgymn00000001",
+		},
+	}
+
+	for _, s := range scenarios {
+		t.Run(s.name, func(t *testing.T) {
+			scenario := tests.ApiScenario{
+				Name:           s.name,
+				Method:         http.MethodGet,
+				URL:            "/api/cashier/search-books?query=" + s.query,
+				TestAppFactory: testAppFactory,
+				ExpectedStatus: s.expectedStatus,
+				ExpectedContent: []string{
+					s.expectedBody,
+				},
+			}
+			scenario.BeforeTestFunc = func(tb testing.TB, app *tests.TestApp, e *core.ServeEvent) {
+				beforeTest(tb, app, e)
+				if s.tokenUserEmail != "" {
+					u, err := app.FindAuthRecordByEmail("users", s.tokenUserEmail)
+					if err != nil {
+						tb.Fatalf("Failed to find user %s: %v", s.tokenUserEmail, err)
+					}
+					token, err := u.NewAuthToken()
+					if err != nil {
+						tb.Fatalf("Failed to generate token: %v", err)
+					}
+					scenario.Headers = map[string]string{
+						"Authorization": token,
+					}
+				}
+			}
+			scenario.Test(t)
+		})
+	}
+}
+
+func TestCashierCreateUser(t *testing.T) {
+	testApp := testAppFactory(t)
+	defer testApp.Cleanup()
+
+	scenarios := []struct {
+		name           string
+		tokenUserEmail string
+		body           string
+		expectedStatus int
+		expectedBody   string
+	}{
+		{
+			name:           "create-user rejected without auth",
+			tokenUserEmail: "",
+			body:           `{"email":"newstudent@burza.cz","password":"password123","passwordConfirm":"password123","name":"Student Novy"}`,
+			expectedStatus: http.StatusUnauthorized,
+			expectedBody:   "The request requires valid record authorization token.",
+		},
+		{
+			name:           "create-user rejected for non-cashier",
+			tokenUserEmail: "seller@burza.cz",
+			body:           `{"email":"newstudent@burza.cz","password":"password123","passwordConfirm":"password123","name":"Student Novy"}`,
+			expectedStatus: http.StatusForbidden,
+			expectedBody:   "Pouze pokladní má přístup",
+		},
+		{
+			name:           "create-user allowed for cashier",
+			tokenUserEmail: "cashier@burza.cz",
+			body:           `{"email":"newstudent@burza.cz","password":"password123","passwordConfirm":"password123","name":"Student Novy"}`,
+			expectedStatus: http.StatusOK,
+			expectedBody:   `"email":"newstudent@burza.cz"`,
+		},
+	}
+
+	for _, s := range scenarios {
+		t.Run(s.name, func(t *testing.T) {
+			scenario := tests.ApiScenario{
+				Name:           s.name,
+				Method:         http.MethodPost,
+				URL:            "/api/cashier/create-user",
+				Body:           strings.NewReader(s.body),
+				TestAppFactory: testAppFactory,
+				ExpectedStatus: s.expectedStatus,
+				ExpectedContent: []string{
+					s.expectedBody,
+				},
+			}
+			scenario.BeforeTestFunc = func(tb testing.TB, app *tests.TestApp, e *core.ServeEvent) {
+				beforeTest(tb, app, e)
+				if s.tokenUserEmail != "" {
+					u, err := app.FindAuthRecordByEmail("users", s.tokenUserEmail)
+					if err != nil {
+						tb.Fatalf("Failed to find user %s: %v", s.tokenUserEmail, err)
+					}
+					token, err := u.NewAuthToken()
+					if err != nil {
+						tb.Fatalf("Failed to generate token: %v", err)
+					}
+					scenario.Headers = map[string]string{
+						"Authorization": token,
+					}
+				}
+			}
+			scenario.Test(t)
+		})
+	}
+}
+
+func TestCashierSellAsSomeoneElseBookRules(t *testing.T) {
+	testApp := testAppFactory(t)
+	defer testApp.Cleanup()
+
+	if err := ensureSchema(testApp); err != nil {
+		t.Fatalf("ensureSchema failed: %v", err)
+	}
+	if err := seedInitialData(testApp); err != nil {
+		t.Logf("seed notice: %v", err)
+	}
+
+	booksColl, err := testApp.FindCollectionByNameOrId("books")
+	if err != nil {
+		t.Fatalf("Books collection not found: %v", err)
+	}
+
+	if booksColl.CreateRule == nil || !strings.Contains(*booksColl.CreateRule, "@request.auth.isCashier = true") {
+		t.Fatalf("expected books.CreateRule to allow isCashier, got %v", booksColl.CreateRule)
+	}
+	if booksColl.DeleteRule == nil || !strings.Contains(*booksColl.DeleteRule, "@request.auth.isCashier = true") {
+		t.Fatalf("expected books.DeleteRule to allow isCashier, got %v", booksColl.DeleteRule)
+	}
+}
+
+

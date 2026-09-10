@@ -11,7 +11,7 @@
 		CAMERA_CONSTRAINTS,
 		type ScanMatch
 	} from '$lib/scanner';
-	import { Plus, Camera, Check, X, Tag, AlertCircle, RefreshCw, ChevronLeft, AlertTriangle } from '@lucide/svelte';
+	import { Plus, Camera, Check, X, Tag, AlertCircle, RefreshCw, ChevronLeft, AlertTriangle, User, UserPlus, Search } from '@lucide/svelte';
 	import { renderDataMatrix } from '$lib/barcodes';
 	import type { Book, CodeStatus } from '$lib/types';
 
@@ -36,9 +36,11 @@
 	const trackedMatches = new Map<string, TrackedMatch>();
 
 	function getCodeStatus(code: string): CodeStatus {
+		const effSeller = effectiveSellerId;
+		if (effSeller && effSeller === code) return 'user';
 		if (auth.user && auth.user.id === code) return 'user';
 		if (sellerBooks.books.some((b) => b.id === code)) return 'used';
-		return bookCodeStore.getStatus(code, auth.user?.id);
+		return bookCodeStore.getStatus(code, effSeller || auth.user?.id);
 	}
 
 	function getStatusPriority(status: CodeStatus): number {
@@ -81,6 +83,111 @@
 
 	// Full-res preview modal
 	let selectedPreviewBook = $state<Book | null>(null);
+
+	// Cashier selling as another user
+	let isCashier = $derived(auth.isCashier);
+	let sellingAsUser = $state<{ id: string; email: string; name?: string } | null>(null);
+	let effectiveSellerId = $derived(sellingAsUser ? sellingAsUser.id : auth.user?.id || '');
+
+	// Modal state for selecting / creating user
+	let isUserSelectModalOpen = $state(false);
+	let userSelectTab = $state<'search' | 'create'>('search');
+	let userSearchQuery = $state('');
+	let userSearchResults = $state<Array<{ id: string; email: string; name: string }>>([]);
+	let isSearchingUsers = $state(false);
+	let userSearchTimeout: any = null;
+
+	// Form state for creating user
+	let newEmail = $state('');
+	let newName = $state('');
+	let newPassword = $state('');
+	let newPasswordConfirm = $state('');
+	let isCreatingUser = $state(false);
+	let createUserError = $state('');
+
+	function selectUserToSellAs(user: { id: string; email: string; name?: string }) {
+		sellingAsUser = user;
+		isUserSelectModalOpen = false;
+		userSearchQuery = '';
+		userSearchResults = [];
+		sellerBooks.init(user.id);
+	}
+
+	function resetToSelf() {
+		sellingAsUser = null;
+		if (auth.user) {
+			sellerBooks.init(auth.user.id);
+		}
+	}
+
+	function handleUserSearchInput(e: Event) {
+		const val = (e.target as HTMLInputElement).value;
+		userSearchQuery = val;
+		if (userSearchTimeout) clearTimeout(userSearchTimeout);
+		if (val.trim().length >= 2) {
+			userSearchTimeout = setTimeout(async () => {
+				isSearchingUsers = true;
+				try {
+					const res = await pb.send<Array<{ id: string; email: string; name: string }>>(
+						`/api/cashier/user-search?query=${encodeURIComponent(val.trim())}`,
+						{ method: 'GET' }
+					);
+					userSearchResults = res || [];
+				} catch (err) {
+					console.error('User search error:', err);
+					userSearchResults = [];
+				} finally {
+					isSearchingUsers = false;
+				}
+			}, 150);
+		} else {
+			userSearchResults = [];
+		}
+	}
+
+	async function handleCreateUser(e: SubmitEvent) {
+		e.preventDefault();
+		createUserError = '';
+		const email = newEmail.trim().toLowerCase();
+		if (!email || !email.includes('@')) {
+			createUserError = 'Zadejte platný e-mail.';
+			return;
+		}
+		if (newPassword.length < 8) {
+			createUserError = 'Heslo musí mít alespoň 8 znaků.';
+			return;
+		}
+		if (newPassword !== newPasswordConfirm) {
+			createUserError = 'Hesla se neshodují.';
+			return;
+		}
+
+		isCreatingUser = true;
+		try {
+			const res = await pb.send<{ id: string; email: string; name: string }>(
+				'/api/cashier/create-user',
+				{
+					method: 'POST',
+					body: {
+						email,
+						name: newName.trim(),
+						password: newPassword,
+						passwordConfirm: newPasswordConfirm
+					}
+				}
+			);
+			newEmail = '';
+			newName = '';
+			newPassword = '';
+			newPasswordConfirm = '';
+			selectUserToSellAs(res);
+		} catch (err: any) {
+			console.error('Create user error:', err);
+			createUserError = err?.message || 'Chyba při vytváření uživatele.';
+		} finally {
+			isCreatingUser = false;
+		}
+	}
 
 	onMount(() => {
 		if (auth.user) {
@@ -406,7 +513,8 @@
 
 	async function submitBook(e: SubmitEvent) {
 		e.preventDefault();
-		if (!auth.user || !scannedCode || !capturedPhotoBlob || !priceInput || priceInput <= 0) {
+		const sellerId = effectiveSellerId;
+		if (!auth.user || !sellerId || !scannedCode || !capturedPhotoBlob || !priceInput || priceInput <= 0) {
 			errorMessage = 'Vyplňte prosím všechny údaje a zadejte platnou cenu.';
 			return;
 		}
@@ -418,8 +526,8 @@
 
 		const cleanCode = scannedCode.trim();
 
-		// Prevent user from submitting their own user ID
-		if (cleanCode === auth.user.id) {
+		// Prevent user from submitting their own user ID or target seller ID
+		if (cleanCode === sellerId || cleanCode === auth.user.id) {
 			errorMessage = 'Toto je kód uživatele, nikoliv učebnice.';
 			return;
 		}
@@ -429,7 +537,7 @@
 
 		try {
 			// Final pre-flight verification against user IDs and existing books
-			const check = await bookCodeStore.validateCode(cleanCode, auth.user.id);
+			const check = await bookCodeStore.validateCode(cleanCode, sellerId);
 			if (check.status === 'user' || check.status === 'invalid') {
 				errorMessage = 'Toto je kód uživatele, nikoliv učebnice.';
 				isSubmitting = false;
@@ -443,10 +551,11 @@
 
 			const formData = new FormData();
 			formData.append('id', cleanCode);
-			formData.append('seller', auth.user.id);
+			formData.append('seller', sellerId);
 			formData.append('event', eventStore.event.id);
 			formData.append('price', String(priceInput));
 			formData.append('status', 'available');
+			formData.append('accepted', 'false');
 			formData.append('photo', capturedPhotoBlob, `book_${cleanCode}.jpg`);
 
 			await pb.collection('books').create(formData);
@@ -500,10 +609,72 @@
 </script>
 
 <div class="flex-1 max-w-4xl w-full mx-auto p-3 sm:p-4 flex flex-col pb-24 bg-white text-black overflow-y-auto">
+	<!-- Cashier "Sell as Someone Else" Bar -->
+	{#if isCashier}
+		{#if sellingAsUser}
+			<div class="mb-4 bg-amber-50 border-2 border-amber-800 p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-[3px_3px_0px_0px_rgba(180,83,9,1)]">
+				<div class="flex items-center gap-2.5 min-w-0">
+					<span class="px-2 py-0.5 bg-amber-800 text-white text-[10px] font-black uppercase shrink-0">
+						REŽIM ZÁKAZNÍKA
+					</span>
+					<div class="min-w-0">
+						<div class="text-xs font-black uppercase text-amber-950 truncate">
+							Prodáváte za: {sellingAsUser.name || sellingAsUser.email}
+						</div>
+						<div class="text-[11px] font-mono font-bold text-amber-800 truncate">
+							{sellingAsUser.email}
+						</div>
+					</div>
+				</div>
+				<div class="flex items-center gap-2 shrink-0">
+					<button
+						type="button"
+						onclick={() => {
+							userSelectTab = 'search';
+							isUserSelectModalOpen = true;
+						}}
+						class="py-1.5 px-3 bg-white hover:bg-neutral-100 text-black border-2 border-black text-xs font-black uppercase tracking-wider cursor-pointer active:scale-95 transition-transform"
+					>
+						ZMĚNIT
+					</button>
+					<button
+						type="button"
+						onclick={resetToSelf}
+						class="py-1.5 px-3 bg-amber-800 text-white hover:bg-amber-900 border-2 border-black text-xs font-black uppercase tracking-wider cursor-pointer active:scale-95 transition-transform"
+					>
+						ZRUŠIT
+					</button>
+				</div>
+			</div>
+		{:else}
+			<div class="mb-4 bg-neutral-50 border-2 border-black p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-[2px_2px_0px_0px_rgba(0,0,0,1)]">
+				<div class="flex items-center gap-2">
+					<span class="px-2 py-0.5 bg-black text-white text-[10px] font-black uppercase">
+						POKLADNÍ
+					</span>
+					<span class="text-xs font-bold uppercase text-neutral-800">
+						Prodáváte za svůj vlastní účet
+					</span>
+				</div>
+				<button
+					type="button"
+					onclick={() => {
+						userSelectTab = 'search';
+						isUserSelectModalOpen = true;
+					}}
+					class="py-1.5 px-3 bg-white hover:bg-neutral-100 text-black border-2 border-black text-xs font-black uppercase tracking-wider cursor-pointer flex items-center justify-center gap-1.5 active:scale-95 transition-transform"
+				>
+					<UserPlus class="w-3.5 h-3.5" />
+					<span>PRODÁVAT ZA UŽIVATELE</span>
+				</button>
+			</div>
+		{/if}
+	{/if}
+
 	<!-- Page Header -->
 	<div class="flex items-center justify-between mb-4 border-b-2 border-black pb-3">
 		<h1 class="text-lg sm:text-xl font-black uppercase tracking-tight text-black">
-			Moje knihy ({sellerBooks.books.length})
+			{sellingAsUser ? `Knihy prodejce (${sellerBooks.books.length})` : `Moje knihy (${sellerBooks.books.length})`}
 		</h1>
 
 		<div class="flex items-center gap-2">
@@ -934,6 +1105,193 @@
 						</div>
 					</div>
 				</div>
+			{/if}
+		</div>
+	</div>
+{/if}
+
+<!-- ---------------------------------------------------------------- -->
+<!-- CASHIER USER SELECT / CREATE MODAL                               -->
+<!-- ---------------------------------------------------------------- -->
+{#if isUserSelectModalOpen}
+	<div
+		class="fixed inset-0 bg-black/85 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 z-50 select-text"
+		role="dialog"
+		aria-modal="true"
+	>
+		<div class="bg-white border-4 border-black p-4 sm:p-6 max-w-lg w-full relative text-black shadow-[8px_8px_0px_0px_rgba(0,0,0,1)] max-h-[90vh] flex flex-col">
+			<button
+				type="button"
+				onclick={() => (isUserSelectModalOpen = false)}
+				class="absolute top-3 right-3 p-1.5 border-2 border-black bg-white hover:bg-neutral-100 text-black cursor-pointer z-10"
+				aria-label="Zavřít"
+			>
+				<X class="w-5 h-5" />
+			</button>
+
+			<h2 class="text-base sm:text-lg font-black uppercase tracking-tight mb-1 pr-8">
+				Vybrat nebo vytvořit prodejce
+			</h2>
+			<p class="text-xs font-bold text-neutral-600 uppercase mb-4">
+				Jako pokladní můžete registrovat knihy jménem jiného uživatele
+			</p>
+
+			<!-- Tabs: Vyhledat vs Vytvořit -->
+			<div class="flex border-2 border-black bg-white p-0.5 text-xs font-black uppercase mb-4 shrink-0">
+				<button
+					type="button"
+					onclick={() => (userSelectTab = 'search')}
+					class="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 transition-all cursor-pointer {userSelectTab === 'search'
+						? 'bg-black text-white'
+						: 'text-black hover:bg-neutral-100'}"
+				>
+					<Search class="w-3.5 h-3.5" />
+					<span>HLEDAT UŽIVATELE</span>
+				</button>
+				<button
+					type="button"
+					onclick={() => (userSelectTab = 'create')}
+					class="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 transition-all cursor-pointer {userSelectTab === 'create'
+						? 'bg-black text-white'
+						: 'text-black hover:bg-neutral-100'}"
+				>
+					<UserPlus class="w-3.5 h-3.5" />
+					<span>VYTVOŘIT ÚČET</span>
+				</button>
+			</div>
+
+			{#if userSelectTab === 'search'}
+				<!-- Search tab -->
+				<div class="flex-1 flex flex-col min-h-0">
+					<div class="relative mb-3 shrink-0">
+						<div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-neutral-500">
+							<Search class="w-4 h-4" />
+						</div>
+						<input
+							type="text"
+							value={userSearchQuery}
+							oninput={handleUserSearchInput}
+							placeholder="Hledat podle e-mailu nebo jména..."
+							class="w-full pl-9 pr-3 py-2.5 bg-neutral-50 border-2 border-black font-bold text-sm text-black placeholder:text-neutral-400 focus:outline-none focus:bg-white"
+						/>
+					</div>
+
+					<div class="flex-1 overflow-y-auto space-y-2 min-h-[160px] max-h-[45vh] pr-1">
+						{#if isSearchingUsers}
+							<div class="py-8 flex flex-col items-center justify-center text-neutral-500 gap-2">
+								<RefreshCw class="w-5 h-5 animate-spin" />
+								<span class="text-xs font-bold uppercase">Hledám uživatele...</span>
+							</div>
+						{:else if userSearchResults.length === 0}
+							<div class="py-8 text-center text-neutral-400 font-bold text-xs uppercase">
+								{userSearchQuery.trim().length < 2
+									? 'Zadejte alespoň 2 znaky pro vyhledávání'
+									: 'Žádný uživatel nenalezen'}
+							</div>
+						{:else}
+							{#each userSearchResults as u (u.id)}
+								<button
+									type="button"
+									onclick={() => selectUserToSellAs(u)}
+									class="w-full text-left border-2 border-black bg-white hover:bg-neutral-50 p-3 flex items-center justify-between gap-3 shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] active:translate-x-0.5 active:translate-y-0.5 transition-all cursor-pointer"
+								>
+									<div class="min-w-0">
+										<div class="text-xs font-black uppercase text-black truncate">
+											{u.name || 'Bez jména'}
+										</div>
+										<div class="text-xs font-mono font-bold text-neutral-600 truncate">
+											{u.email}
+										</div>
+									</div>
+									<span class="px-2 py-1 bg-black text-white text-[10px] font-black uppercase shrink-0">
+										VYBRAT
+									</span>
+								</button>
+							{/each}
+						{/if}
+					</div>
+				</div>
+			{:else}
+				<!-- Create user tab -->
+				<form onsubmit={handleCreateUser} class="flex-1 overflow-y-auto space-y-3 pr-1">
+					{#if createUserError}
+						<div class="p-2.5 bg-red-100 border-2 border-red-600 text-red-700 text-xs font-bold flex items-center gap-2">
+							<AlertCircle class="w-4 h-4 shrink-0" />
+							<span>{createUserError}</span>
+						</div>
+					{/if}
+
+					<div>
+						<label for="newUserEmail" class="block text-xs font-black uppercase mb-1">
+							E-mail zákazníka *
+						</label>
+						<input
+							id="newUserEmail"
+							type="email"
+							bind:value={newEmail}
+							required
+							placeholder="student@skola.cz"
+							class="w-full px-3 py-2 bg-neutral-50 border-2 border-black font-bold text-sm text-black focus:outline-none focus:bg-white"
+						/>
+					</div>
+
+					<div>
+						<label for="newUserName" class="block text-xs font-black uppercase mb-1">
+							Jméno a příjmení
+						</label>
+						<input
+							id="newUserName"
+							type="text"
+							bind:value={newName}
+							placeholder="Jan Novák"
+							class="w-full px-3 py-2 bg-neutral-50 border-2 border-black font-bold text-sm text-black focus:outline-none focus:bg-white"
+						/>
+					</div>
+
+					<div>
+						<label for="newUserPassword" class="block text-xs font-black uppercase mb-1">
+							Heslo (min. 8 znaků) *
+						</label>
+						<input
+							id="newUserPassword"
+							type="password"
+							bind:value={newPassword}
+							required
+							minlength="8"
+							placeholder="••••••••"
+							class="w-full px-3 py-2 bg-neutral-50 border-2 border-black font-bold text-sm text-black focus:outline-none focus:bg-white"
+						/>
+					</div>
+
+					<div>
+						<label for="newUserPasswordConfirm" class="block text-xs font-black uppercase mb-1">
+							Potvrzení hesla *
+						</label>
+						<input
+							id="newUserPasswordConfirm"
+							type="password"
+							bind:value={newPasswordConfirm}
+							required
+							minlength="8"
+							placeholder="••••••••"
+							class="w-full px-3 py-2 bg-neutral-50 border-2 border-black font-bold text-sm text-black focus:outline-none focus:bg-white"
+						/>
+					</div>
+
+					<button
+						type="submit"
+						disabled={isCreatingUser}
+						class="w-full mt-2 py-2.5 bg-black text-white hover:bg-neutral-800 disabled:opacity-50 text-xs font-black uppercase tracking-wider border-2 border-black cursor-pointer flex items-center justify-center gap-1.5"
+					>
+						{#if isCreatingUser}
+							<RefreshCw class="w-4 h-4 animate-spin" />
+							<span>VYTVÁŘÍM ÚČET...</span>
+						{:else}
+							<UserPlus class="w-4 h-4" />
+							<span>VYTVOŘIT A PRODÁVAT JAKO TENTO UŽIVATEL</span>
+						{/if}
+					</button>
+				</form>
 			{/if}
 		</div>
 	</div>

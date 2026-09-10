@@ -269,9 +269,9 @@ func ensureSchema(app core.App) error {
 		booksColl = core.NewBaseCollection("books")
 		booksColl.ListRule = types.Pointer("@request.auth.id = seller.id || @request.auth.isCashier = true")
 		booksColl.ViewRule = types.Pointer("@request.auth.id = seller.id || @request.auth.isCashier = true")
-		booksColl.CreateRule = types.Pointer("@request.auth.id != '' && @request.auth.id = @request.body.seller")
+		booksColl.CreateRule = types.Pointer("@request.auth.id != '' && (@request.auth.id = @request.body.seller || @request.auth.isCashier = true)")
 		booksColl.UpdateRule = types.Pointer("@request.auth.id != '' && (@request.auth.id = seller || @request.auth.isCashier = true)")
-		booksColl.DeleteRule = types.Pointer("@request.auth.id != '' && @request.auth.id = seller && status = 'available'")
+		booksColl.DeleteRule = types.Pointer("@request.auth.id != '' && (@request.auth.id = seller || @request.auth.isCashier = true) && status = 'available'")
 		booksColl.Fields.Add(
 			&core.RelationField{
 				Name: "seller", Required: true,
@@ -300,6 +300,8 @@ func ensureSchema(app core.App) error {
 			},
 			&core.BoolField{Name: "accepted"},
 			&core.DateField{Name: "checkoutExpiresAt"},
+			&core.AutodateField{Name: "created", OnCreate: true},
+			&core.AutodateField{Name: "updated", OnCreate: true, OnUpdate: true},
 		)
 		if err := app.Save(booksColl); err != nil {
 			return fmt.Errorf("creating books collection: %w", err)
@@ -327,6 +329,16 @@ func ensureSchema(app core.App) error {
 		}
 		if booksColl.ViewRule == nil || *booksColl.ViewRule != newRule {
 			booksColl.ViewRule = types.Pointer(newRule)
+			changed = true
+		}
+		newCreateRule := "@request.auth.id != '' && (@request.auth.id = @request.body.seller || @request.auth.isCashier = true)"
+		if booksColl.CreateRule == nil || *booksColl.CreateRule != newCreateRule {
+			booksColl.CreateRule = types.Pointer(newCreateRule)
+			changed = true
+		}
+		newDeleteRule := "@request.auth.id != '' && (@request.auth.id = seller || @request.auth.isCashier = true) && status = 'available'"
+		if booksColl.DeleteRule == nil || *booksColl.DeleteRule != newDeleteRule {
+			booksColl.DeleteRule = types.Pointer(newDeleteRule)
 			changed = true
 		}
 		if booksColl.Fields.GetByName("accepted") == nil {
@@ -1237,6 +1249,158 @@ func registerApiEndpoints(e *core.ServeEvent) {
 		}
 
 		return c.JSON(http.StatusOK, items)
+	}).Bind(apis.RequireAuth("users"))
+
+	// GET /api/cashier/search-books?query={query} - Autocomplete books by ID (prefix/substring)
+	e.Router.GET("/api/cashier/search-books", func(c *core.RequestEvent) error {
+		authRecord := c.Auth
+		if authRecord == nil || !authRecord.GetBool("isCashier") {
+			return c.ForbiddenError("Pouze pokladní má přístup k této funkci.", nil)
+		}
+
+		query := strings.TrimSpace(c.Request.URL.Query().Get("query"))
+		qLower := strings.ToLower(query)
+
+		recordQuery := c.App.RecordQuery("books")
+		if qLower != "" {
+			recordQuery.Where(dbx.NewExp("LOWER(id) LIKE {:q}", dbx.Params{"q": "%" + qLower + "%"}))
+		}
+		recordQuery.OrderBy("id DESC").Limit(20)
+
+		var records []*core.Record
+		if err := recordQuery.All(&records); err != nil {
+			return c.InternalServerError(err.Error(), nil)
+		}
+
+		type sellerInfo struct {
+			Id    string `json:"id"`
+			Name  string `json:"name"`
+			Email string `json:"email"`
+		}
+
+		type bookResult struct {
+			Id             string      `json:"id"`
+			Price          float64     `json:"price"`
+			Photo          string      `json:"photo"`
+			Status         string      `json:"status"`
+			Accepted       bool        `json:"accepted"`
+			Seller         string      `json:"seller"`
+			SellerInfo     *sellerInfo `json:"sellerInfo,omitempty"`
+			CollectionId   string      `json:"collectionId"`
+			CollectionName string      `json:"collectionName"`
+		}
+
+		sellerMap := make(map[string]*sellerInfo)
+		results := make([]bookResult, 0, len(records))
+
+		for _, book := range records {
+			sellerId := book.GetString("seller")
+			var sInfo *sellerInfo
+			if sellerId != "" {
+				if cached, ok := sellerMap[sellerId]; ok {
+					sInfo = cached
+				} else {
+					if sellerUser, _ := c.App.FindRecordById("users", sellerId); sellerUser != nil {
+						sInfo = &sellerInfo{
+							Id:    sellerUser.Id,
+							Name:  sellerUser.GetString("name"),
+							Email: sellerUser.GetString("email"),
+						}
+						sellerMap[sellerId] = sInfo
+					}
+				}
+			}
+
+			results = append(results, bookResult{
+				Id:             book.Id,
+				Price:          book.GetFloat("price"),
+				Photo:          book.GetString("photo"),
+				Status:         book.GetString("status"),
+				Accepted:       book.GetBool("accepted"),
+				Seller:         sellerId,
+				SellerInfo:     sInfo,
+				CollectionId:   book.Collection().Id,
+				CollectionName: "books",
+			})
+		}
+
+		return c.JSON(http.StatusOK, results)
+	}).Bind(apis.RequireAuth("users"))
+
+	// POST /api/cashier/create-user - Create a new user account on the spot (cashier only)
+	e.Router.POST("/api/cashier/create-user", func(c *core.RequestEvent) error {
+		authRecord := c.Auth
+		if authRecord == nil || !authRecord.GetBool("isCashier") {
+			return c.ForbiddenError("Pouze pokladní má přístup k této funkci.", nil)
+		}
+
+		var req struct {
+			Email           string `json:"email"`
+			Password        string `json:"password"`
+			PasswordConfirm string `json:"passwordConfirm"`
+			Name            string `json:"name"`
+		}
+		if err := c.BindBody(&req); err != nil {
+			return c.BadRequestError("Neplatný formát požadavku.", nil)
+		}
+
+		email := strings.TrimSpace(strings.ToLower(req.Email))
+		if email == "" || !strings.Contains(email, "@") {
+			return c.BadRequestError("Zadejte platnou e-mailovou adresu.", nil)
+		}
+
+		if len(req.Password) < 8 {
+			return c.BadRequestError("Heslo musí mít alespoň 8 znaků.", nil)
+		}
+
+		if req.Password != req.PasswordConfirm {
+			return c.BadRequestError("Hesla se neshodují.", nil)
+		}
+
+		existing, _ := c.App.FindAuthRecordByEmail("users", email)
+		if existing != nil {
+			return c.BadRequestError("Uživatel s tímto e-mailem již existuje.", nil)
+		}
+
+		usersColl, err := c.App.FindCollectionByNameOrId("users")
+		if err != nil {
+			return c.InternalServerError("Kolekce uživatelů nenalezena.", err)
+		}
+
+		newUser := core.NewRecord(usersColl)
+		newUser.SetEmail(email)
+		userName := strings.TrimSpace(req.Name)
+		if userName == "" {
+			userName = strings.Split(email, "@")[0]
+		}
+		newUser.Set("name", userName)
+		newUser.Set("onboardingComplete", true)
+		newUser.Set("isCashier", false)
+		newUser.Set("emailVisibility", true)
+		newUser.SetVerified(true)
+		newUser.SetPassword(req.Password)
+
+		usernamePrefix := strings.ToLower(strings.Split(email, "@")[0])
+		cleanedUser := ""
+		for _, r := range usernamePrefix {
+			if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '_' {
+				cleanedUser += string(r)
+			}
+		}
+		if len(cleanedUser) < 3 {
+			cleanedUser = "zakaznik"
+		}
+		newUser.Set("username", fmt.Sprintf("%s_%s", cleanedUser, randomAlphaNum(5)))
+
+		if err := c.App.Save(newUser); err != nil {
+			return c.BadRequestError("Chyba při ukládání uživatele: "+err.Error(), nil)
+		}
+
+		return c.JSON(http.StatusOK, map[string]any{
+			"id":    newUser.Id,
+			"email": newUser.GetString("email"),
+			"name":  newUser.GetString("name"),
+		})
 	}).Bind(apis.RequireAuth("users"))
 
 	// GET /api/cashier/lookup-code?code={code} - Fast lookup whether code is user or book

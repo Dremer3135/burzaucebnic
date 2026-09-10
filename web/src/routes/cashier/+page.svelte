@@ -24,7 +24,9 @@
 		X,
 		ZoomIn,
 		Check,
-		Camera
+		Camera,
+		Search,
+		Plus
 	} from '@lucide/svelte';
 	import type { Book, Payment, Event as AppEvent } from '$lib/types';
 
@@ -143,15 +145,71 @@
 	let confirmAction = $state<'CASH' | 'QR' | null>(null);
 	let unsubBooksRealtime: (() => void) | null = null;
 
+	// Cashier Book Search Modal State
+	let isSearchModalOpen = $state(false);
+	let searchQuery = $state('');
+	let searchResults = $state<Book[]>([]);
+	let isSearchingBooks = $state(false);
+	let searchDebounceTimeout: any = null;
+
 	// Pure standard mode gating:
 	// Scanner strictly scans and auto-adds ONLY in pure standard camera view
 	let canScan = $derived(
 		paymentMode === null &&
 		!isCheckoutModalOpen &&
 		!previewBook &&
+		!isSearchModalOpen &&
 		!sheetExpanded &&
 		!isDraggingSheet
 	);
+
+	async function openSearchModal() {
+		isSearchModalOpen = true;
+		searchQuery = '';
+		searchResults = [];
+		await performBookSearch('');
+	}
+
+	function closeSearchModal() {
+		isSearchModalOpen = false;
+		searchQuery = '';
+		searchResults = [];
+		if (searchDebounceTimeout) clearTimeout(searchDebounceTimeout);
+	}
+
+	function handleSearchInput(e: Event) {
+		const val = (e.target as HTMLInputElement).value;
+		searchQuery = val;
+		if (searchDebounceTimeout) clearTimeout(searchDebounceTimeout);
+		searchDebounceTimeout = setTimeout(() => {
+			performBookSearch(val);
+		}, 150);
+	}
+
+	async function performBookSearch(q: string) {
+		isSearchingBooks = true;
+		try {
+			const res = await pb.send<Book[]>(
+				`/api/cashier/search-books?query=${encodeURIComponent(q.trim())}`,
+				{ method: 'GET' }
+			);
+			searchResults = res || [];
+		} catch (err) {
+			console.error('Book search error:', err);
+			searchResults = [];
+		} finally {
+			isSearchingBooks = false;
+		}
+	}
+
+	function addSearchedBookToCart(book: Book) {
+		if (book.status !== 'available' || !book.accepted) return;
+		if (!cartBooks.some((b) => b.id === book.id)) {
+			cartBooks = [...cartBooks, book];
+			suppressedBooks.delete(book.id);
+			if (navigator.vibrate) navigator.vibrate([50]);
+		}
+	}
 
 	// ----------------------------------------------------
 	// LIFECYCLE & DIMENSIONS
@@ -853,6 +911,21 @@
 			class="absolute inset-0 pointer-events-none w-full h-full z-10"
 		></canvas>
 
+		<!-- Top-Right Floating Actions: ID Search Button -->
+		{#if paymentMode === null}
+			<div class="absolute top-3 right-3 z-20 flex items-center gap-2">
+				<button
+					type="button"
+					onclick={openSearchModal}
+					class="p-2.5 bg-white text-black border-2 border-black shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] hover:bg-neutral-100 active:translate-x-0.5 active:translate-y-0.5 transition-transform cursor-pointer flex items-center gap-1.5 font-black text-xs uppercase tracking-wider"
+					title="Hledat knihu podle kódu"
+				>
+					<Search class="w-4 h-4" />
+					<span class="hidden sm:inline">HLEDAT KÓD</span>
+				</button>
+			</div>
+		{/if}
+
 
 		<!-- Camera Error -->
 		{#if cameraError}
@@ -1138,6 +1211,176 @@
 					>
 						<Banknote class="w-4 h-4" />
 						<span>ZAPLATIT</span>
+					</button>
+				</div>
+			</div>
+		</div>
+	{/if}
+
+	<!-- ---------------------------------------------------------------- -->
+	<!-- BOOK ID SEARCH MODAL                                             -->
+	<!-- ---------------------------------------------------------------- -->
+	{#if isSearchModalOpen}
+		<div
+			class="fixed inset-0 bg-black/85 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 z-50 select-text"
+			role="dialog"
+			aria-modal="true"
+		>
+			<div class="bg-white border-4 border-black p-4 sm:p-5 max-w-lg w-full relative text-black shadow-[8px_8px_0px_0px_rgba(0,0,0,1)] max-h-[90vh] flex flex-col">
+				<button
+					type="button"
+					onclick={closeSearchModal}
+					class="absolute top-3 right-3 p-1.5 border-2 border-black bg-white hover:bg-neutral-100 text-black cursor-pointer z-10"
+					aria-label="Zavřít"
+				>
+					<X class="w-5 h-5" />
+				</button>
+
+				<h2 class="text-base sm:text-lg font-black uppercase tracking-tight mb-1 pr-8">
+					Hledat knihu podle kódu
+				</h2>
+				<p class="text-xs font-bold text-neutral-600 uppercase mb-3">
+					Zadejte ID nebo část kódu knihy
+				</p>
+
+				<!-- Search Input -->
+				<div class="relative mb-4 shrink-0">
+					<div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-neutral-500">
+						<Search class="w-4 h-4" />
+					</div>
+					<input
+						type="text"
+						autofocus
+						value={searchQuery}
+						oninput={handleSearchInput}
+						placeholder="Např. matgymn00000001..."
+						class="w-full pl-9 pr-8 py-2.5 bg-neutral-50 border-2 border-black font-mono font-bold text-sm text-black placeholder:text-neutral-400 focus:outline-none focus:bg-white"
+					/>
+					{#if searchQuery}
+						<button
+							type="button"
+							onclick={() => {
+								searchQuery = '';
+								performBookSearch('');
+							}}
+							class="absolute inset-y-0 right-0 pr-2.5 flex items-center text-neutral-500 hover:text-black cursor-pointer"
+							title="Vymazat"
+						>
+							<X class="w-4 h-4" />
+						</button>
+					{/if}
+				</div>
+
+				<!-- Search Results List -->
+				<div class="flex-1 overflow-y-auto space-y-2 min-h-[180px] max-h-[50vh] pr-1">
+					{#if isSearchingBooks}
+						<div class="py-8 flex flex-col items-center justify-center text-neutral-500 gap-2">
+							<RefreshCw class="w-5 h-5 animate-spin" />
+							<span class="text-xs font-bold uppercase">Vyhledávám knihy...</span>
+						</div>
+					{:else if searchResults.length === 0}
+						<div class="py-8 text-center text-neutral-400 font-bold text-xs uppercase">
+							{searchQuery.trim() ? 'Žádná kniha s tímto kódem nebyla nalezena.' : 'Zatím nebyly nalezeny žádné knihy.'}
+						</div>
+					{:else}
+						{#each searchResults as book (book.id)}
+							{@const col = idToColor(book.id)}
+							{@const inCart = cartBooks.some((b) => b.id === book.id)}
+							{@const isAvailable = book.status === 'available'}
+							{@const isAccepted = book.accepted}
+
+							<div class="border-2 border-black bg-white p-2.5 flex items-center justify-between gap-3 shadow-[2px_2px_0px_0px_rgba(0,0,0,1)]">
+								<div class="flex items-center gap-2.5 min-w-0">
+									<!-- Key Color Stripe -->
+									<div
+										class="w-3 h-11 border border-black shrink-0"
+										style="background-color: {col.bg};"
+										title="Barevný klíč knihy"
+									></div>
+
+									<!-- Thumbnail Cover -->
+									<button
+										type="button"
+										onclick={() => (previewBook = book)}
+										class="relative w-9 h-11 border border-black bg-neutral-100 overflow-hidden shrink-0 group cursor-pointer"
+										title="Zvětšit obálku"
+									>
+										{#if book.photo}
+											<img
+												src={getBookThumbnailUrl(book)}
+												alt={book.id}
+												class="w-full h-full object-cover"
+											/>
+											<div class="absolute inset-0 bg-black/30 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
+												<ZoomIn class="w-3 h-3 text-white" />
+											</div>
+										{/if}
+									</button>
+
+									<!-- Book Details -->
+									<div class="min-w-0">
+										<div class="flex items-center gap-1.5 flex-wrap">
+											<span
+												class="px-1.5 py-0.2 border text-[10px] font-black uppercase text-white font-mono"
+												style="background-color: {col.bg}; border-color: {col.border};"
+											>
+												#{book.id}
+											</span>
+											<span class="text-xs font-black text-black">
+												{book.price} Kč
+											</span>
+										</div>
+										<div class="text-[11px] font-semibold text-neutral-600 truncate mt-0.5">
+											{#if (book as any).sellerInfo}
+												Prodejce: {(book as any).sellerInfo.name || (book as any).sellerInfo.email}
+											{:else}
+												Prodejce ID: {book.seller}
+											{/if}
+										</div>
+									</div>
+								</div>
+
+								<!-- Action / Status -->
+								<div class="shrink-0 flex items-center gap-1.5">
+									{#if inCart}
+										<span class="px-2 py-1 bg-emerald-100 border border-emerald-800 text-emerald-900 text-[10px] font-black uppercase">
+											V KOŠÍKU
+										</span>
+									{:else if !isAccepted}
+										<span class="px-2 py-1 bg-amber-100 border border-amber-800 text-amber-900 text-[10px] font-black uppercase" title="Tato kniha ještě nebyla fyzicky přijata">
+											NEPŘIJATO
+										</span>
+									{:else if !isAvailable}
+										<span class="px-2 py-1 bg-neutral-200 border border-neutral-400 text-neutral-600 text-[10px] font-black uppercase">
+											{book.status === 'bought' ? 'PRODÁNO' : 'REZERVACE'}
+										</span>
+									{:else}
+										<button
+											type="button"
+											onclick={() => addSearchedBookToCart(book)}
+											class="px-2.5 py-1.5 bg-black text-white hover:bg-neutral-800 active:scale-95 font-black text-xs uppercase tracking-wider border-2 border-black cursor-pointer flex items-center gap-1"
+										>
+											<Plus class="w-3.5 h-3.5" />
+											<span>PŘIDAT</span>
+										</button>
+									{/if}
+								</div>
+							</div>
+						{/each}
+					{/if}
+				</div>
+
+				<!-- Footer -->
+				<div class="mt-4 pt-3 border-t-2 border-black flex justify-between items-center shrink-0">
+					<span class="text-xs font-bold text-neutral-600">
+						V košíku: {cartBooks.length} ks ({totalAmount} Kč)
+					</span>
+					<button
+						type="button"
+						onclick={closeSearchModal}
+						class="py-2 px-4 bg-black text-white hover:bg-neutral-800 text-xs font-black uppercase tracking-wider border-2 border-black cursor-pointer"
+					>
+						HOTOVO
 					</button>
 				</div>
 			</div>
