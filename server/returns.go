@@ -184,6 +184,52 @@ func ibanToCzechAccount(ibanStr string) (accountTo string, bankCode string, err 
 	return "", "", fmt.Errorf("nepodporovaný formát čísla účtu (očekáván CZ IBAN nebo české číslo účtu): %s", ibanStr)
 }
 
+// sanitizeFilenameForHeader removes diacritics and non-ascii characters for clean Content-Disposition filenames
+func sanitizeFilenameForHeader(s string) string {
+	var b strings.Builder
+	for _, r := range strings.ToLower(s) {
+		switch r {
+		case 'á', 'ä':
+			b.WriteRune('a')
+		case 'č':
+			b.WriteRune('c')
+		case 'ď':
+			b.WriteRune('d')
+		case 'é', 'ě', 'ë':
+			b.WriteRune('e')
+		case 'í', 'ï':
+			b.WriteRune('i')
+		case 'ň':
+			b.WriteRune('n')
+		case 'ó', 'ö':
+			b.WriteRune('o')
+		case 'ř':
+			b.WriteRune('r')
+		case 'š':
+			b.WriteRune('s')
+		case 'ť':
+			b.WriteRune('t')
+		case 'ú', 'ů', 'ü':
+			b.WriteRune('u')
+		case 'ý', 'ÿ':
+			b.WriteRune('y')
+		case 'ž':
+			b.WriteRune('z')
+		case ' ':
+			b.WriteRune('_')
+		default:
+			if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '_' || r == '-' {
+				b.WriteRune(r)
+			}
+		}
+	}
+	res := b.String()
+	for strings.Contains(res, "__") {
+		res = strings.ReplaceAll(res, "__", "_")
+	}
+	return strings.Trim(res, "_-")
+}
+
 // SellerBalanceSummary holds computed financial balances and book counts for a seller in an event
 type SellerBalanceSummary struct {
 	SellerId      string  `json:"id"`
@@ -933,7 +979,7 @@ func registerReturnsEndpoints(e *core.ServeEvent) {
 
 		filename := fmt.Sprintf("fio_vyplaty_burza_%s.xml", time.Now().Format("2006-01-02"))
 		if sellerId != "" && len(summaries) > 0 {
-			cleanName := strings.ToLower(strings.ReplaceAll(summaries[0].Name, " ", "_"))
+			cleanName := sanitizeFilenameForHeader(summaries[0].Name)
 			if cleanName == "" {
 				cleanName = summaries[0].SellerId
 			}
