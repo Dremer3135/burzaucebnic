@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import { auth } from '$lib/stores.svelte';
-	import { X, LogOut, BookOpen, Banknote, ChevronRight, CheckCircle2 } from '@lucide/svelte';
+	import { X, LogOut, BookOpen, Banknote, ChevronRight, CheckCircle2, RotateCcw } from '@lucide/svelte';
 
 	let { open = $bindable(false), onopenPayout }: { open?: boolean; onopenPayout?: () => void } = $props();
 
@@ -13,6 +13,11 @@
 		open = false;
 		auth.logout();
 		await goto('/');
+	}
+
+	async function handleOpenReturns() {
+		open = false;
+		await goto('/cashier/return');
 	}
 
 	function handleOpenPayout() {
@@ -105,6 +110,29 @@
 
 			<!-- Menu Items Navigation -->
 			<nav class="p-3 space-y-2">
+				{#if auth.isCashier}
+					<!-- Pokladna: Vracení a výplaty -->
+					<button
+						onclick={handleOpenReturns}
+						class="w-full p-3 border-2 border-black bg-yellow-50 hover:bg-yellow-100 active:scale-[0.99] transition-all text-left flex items-center justify-between cursor-pointer group shadow-[2px_2px_0px_0px_rgba(0,0,0,1)]"
+					>
+						<div class="flex items-center gap-3 min-w-0">
+							<div class="p-2 border border-black bg-yellow-300 text-black group-hover:bg-black group-hover:text-white transition-colors shrink-0">
+								<RotateCcw class="w-4 h-4" />
+							</div>
+							<div class="min-w-0">
+								<p class="text-xs font-black uppercase tracking-wider text-black">
+									Vracení a výplaty
+								</p>
+								<p class="text-[11px] text-neutral-600 font-medium truncate">
+									Vracení knih & výplaty prodejcům
+								</p>
+							</div>
+						</div>
+						<ChevronRight class="w-4 h-4 text-black shrink-0" />
+					</button>
+				{/if}
+
 				<!-- 1. Způsob výplaty -->
 				<button
 					onclick={handleOpenPayout}

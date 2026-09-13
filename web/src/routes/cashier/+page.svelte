@@ -103,6 +103,39 @@
 	let swipeDeltaX = $state(0);
 	let removingItemIds = $state<Set<string>>(new Set());
 
+	// Returned book warning alert
+	let returnedBookAlert = $state<string | null>(null);
+	let returnedAlertTimeout: any = null;
+
+	function playErrorTone() {
+		try {
+			const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+			if (!AudioContextClass) return;
+			const ctx = new AudioContextClass();
+			const osc = ctx.createOscillator();
+			const gain = ctx.createGain();
+			osc.type = 'sawtooth';
+			osc.frequency.setValueAtTime(300, ctx.currentTime);
+			osc.frequency.exponentialRampToValueAtTime(150, ctx.currentTime + 0.25);
+			gain.gain.setValueAtTime(0.25, ctx.currentTime);
+			gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.25);
+			osc.connect(gain);
+			gain.connect(ctx.destination);
+			osc.start();
+			osc.stop(ctx.currentTime + 0.25);
+		} catch {}
+	}
+
+	function showReturnedBookAlert(bookId: string) {
+		returnedBookAlert = `Kniha '${bookId}' byla již vrácena prodejci a nelze ji zakoupit.`;
+		if (navigator.vibrate) navigator.vibrate([150, 80, 150]);
+		playErrorTone();
+		if (returnedAlertTimeout) clearTimeout(returnedAlertTimeout);
+		returnedAlertTimeout = setTimeout(() => {
+			returnedBookAlert = null;
+		}, 4000);
+	}
+
 	// ----------------------------------------------------
 	// 3. IMAGE PREVIEW MODAL
 	// ----------------------------------------------------
@@ -203,6 +236,10 @@
 	}
 
 	function addSearchedBookToCart(book: Book) {
+		if (book.status === 'returned') {
+			showReturnedBookAlert(book.id);
+			return;
+		}
 		if (book.status !== 'available' || !book.accepted) return;
 		if (!cartBooks.some((b) => b.id === book.id)) {
 			cartBooks = [...cartBooks, book];
@@ -253,6 +290,10 @@
 	onDestroy(() => {
 		if (typeof window !== 'undefined') {
 			window.removeEventListener('resize', updateSheetDimensions);
+		}
+		if (returnedAlertTimeout) {
+			clearTimeout(returnedAlertTimeout);
+			returnedAlertTimeout = null;
 		}
 		if (unsubBooksRealtime) {
 			unsubBooksRealtime();
@@ -473,6 +514,13 @@
 									text: '#737373',
 									lightBg: '#fafafa'
 								});
+							} else if (cached.book.status === 'returned') {
+								drawPricePolygon(ctx, match.position, 'VRÁCENO', transform, {
+									bg: '#fee2e2',
+									border: '#dc2626',
+									text: '#dc2626',
+									lightBg: '#fef2f2'
+								});
 							}
 						}
 					}
@@ -516,6 +564,10 @@
 			}
 		} else if (info?.type === 'book') {
 			const book: Book = info.book;
+			if (book.status === 'returned') {
+				showReturnedBookAlert(book.id);
+				return;
+			}
 			if (book.status === 'available' && book.accepted) {
 				if (!suppressedBooks.has(book.id) && !cartBooks.some((b) => b.id === book.id)) {
 					// AUTO-ADD TO CART!
@@ -926,6 +978,18 @@
 			</div>
 		{/if}
 
+		<!-- Warning banner for returned book -->
+		{#if returnedBookAlert}
+			<div class="absolute top-3 left-3 right-3 sm:left-auto sm:right-3 sm:max-w-md z-30 p-3 bg-red-600 text-white border-2 border-black shadow-[3px_3px_0px_0px_rgba(0,0,0,1)] flex items-center justify-between gap-2 text-xs font-black uppercase tracking-wide">
+				<div class="flex items-center gap-2">
+					<AlertCircle class="w-4 h-4 shrink-0" />
+					<span>{returnedBookAlert}</span>
+				</div>
+				<button type="button" onclick={() => (returnedBookAlert = null)} class="p-1 hover:bg-red-700 cursor-pointer">
+					<X class="w-3.5 h-3.5" />
+				</button>
+			</div>
+		{/if}
 
 		<!-- Camera Error -->
 		{#if cameraError}

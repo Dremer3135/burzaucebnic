@@ -188,6 +188,13 @@
 								text: '#737373',
 								lightBg: '#fafafa'
 							});
+						} else if (priceInfo.status === 'returned') {
+							drawPricePolygon(ctx, match.position, 'VRÁCENO', transform, {
+								bg: '#fee2e2',
+								border: '#dc2626',
+								text: '#dc2626',
+								lightBg: '#fef2f2'
+							});
 						}
 					}
 					// If null (not found in DB), do NOT draw a polygon

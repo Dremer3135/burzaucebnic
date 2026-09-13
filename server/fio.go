@@ -87,6 +87,7 @@ type FioTransaction struct {
 	BankCode   string    `json:"bankCode"`   // column3 (Kód banky)
 	SenderName string    `json:"senderName"` // column10 / column7
 	Message    string    `json:"message"`    // column16 (Zpráva pro příjemce)
+	Comment    string    `json:"comment"`    // column25 (Komentář)
 }
 
 // checkFioRateLimit checks if enough time has passed since the last Fio request
@@ -198,6 +199,7 @@ func parseFioResponse(body []byte) ([]FioTransaction, error) {
 			SenderName: extractFioString(t["column10"]),
 			Currency:   extractFioString(t["column14"]),
 			Message:    extractFioString(t["column16"]),
+			Comment:    extractFioString(t["column25"]),
 			ID:         extractFioString(t["column22"]),
 		}
 		if tx.SenderName == "" {

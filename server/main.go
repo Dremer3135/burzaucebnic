@@ -123,13 +123,23 @@ func registerHooks(app core.App) {
 		return e.Next()
 	})
 
-	// Hook: enforce that only cashiers can change accepted status
+	// Hook: enforce that only cashiers can change accepted status or un-return books
 	app.OnRecordUpdateRequest("books").BindFunc(func(e *core.RecordRequestEvent) error {
 		oldRecord, err := e.App.FindRecordById("books", e.Record.Id)
 		if err == nil && oldRecord != nil {
 			if e.Record.GetBool("accepted") != oldRecord.GetBool("accepted") {
 				if e.Auth == nil || !e.Auth.GetBool("isCashier") {
 					return e.ForbiddenError("Pouze pokladní může měnit stav přijetí knihy.", nil)
+				}
+			}
+			if oldRecord.GetString("status") == "returned" {
+				if e.Auth == nil || !e.Auth.GetBool("isCashier") {
+					return e.ForbiddenError("Pouze pokladní může změnit stav již vrácené knihy.", nil)
+				}
+			}
+			if oldRecord.GetString("status") != "returned" && e.Record.GetString("status") == "returned" {
+				if e.Auth == nil || !e.Auth.GetBool("isCashier") {
+					return e.ForbiddenError("Pouze pokladní může označit knihu jako vrácenou.", nil)
 				}
 			}
 		}
@@ -295,7 +305,7 @@ func ensureSchema(app core.App) error {
 			},
 			&core.SelectField{
 				Name: "status",
-				Values:    []string{"available", "checkout", "bought"},
+				Values:    []string{"available", "checkout", "bought", "returned"},
 				MaxSelect: 1,
 			},
 			&core.BoolField{Name: "accepted"},
@@ -356,6 +366,21 @@ func ensureSchema(app core.App) error {
 		if booksColl.Fields.GetByName("updated") == nil {
 			booksColl.Fields.Add(&core.AutodateField{Name: "updated", OnCreate: true, OnUpdate: true})
 			changed = true
+		}
+		if statusField := booksColl.Fields.GetByName("status"); statusField != nil {
+			if statusSelect, ok := statusField.(*core.SelectField); ok {
+				hasReturned := false
+				for _, v := range statusSelect.Values {
+					if v == "returned" {
+						hasReturned = true
+						break
+					}
+				}
+				if !hasReturned {
+					statusSelect.Values = append(statusSelect.Values, "returned")
+					changed = true
+				}
+			}
 		}
 		if changed {
 			if err := app.Save(booksColl); err != nil {
@@ -501,6 +526,11 @@ func ensureSchema(app core.App) error {
 
 	// 5. Ensure email_templates collection
 	if err := EnsureEmailTemplatesSchema(app); err != nil {
+		return err
+	}
+
+	// 6. Ensure money_returns collection
+	if err := EnsureMoneyReturnsSchema(app); err != nil {
 		return err
 	}
 
@@ -696,6 +726,7 @@ func seedInitialData(app core.App) error {
 func registerApiEndpoints(e *core.ServeEvent) {
 	registerEmailEndpoints(e)
 	registerFioEndpoints(e)
+	registerReturnsEndpoints(e)
 
 	// GET /api/check-book-code?code={code} - Fast check if code is available for registering a new book
 	e.Router.GET("/api/check-book-code", func(c *core.RequestEvent) error {
@@ -791,6 +822,10 @@ func registerApiEndpoints(e *core.ServeEvent) {
 				book, err := txApp.FindRecordById("books", bookId)
 				if err != nil || book == nil {
 					return c.NotFoundError(fmt.Sprintf("Kniha s ID '%s' nebyla nalezena.", bookId), nil)
+				}
+
+				if book.GetString("status") == "returned" {
+					return router.NewApiError(http.StatusBadRequest, fmt.Sprintf("Kniha '%s' byla již vrácena prodejci a nelze ji zakoupit.", book.Id), nil)
 				}
 
 				if book.GetString("status") != "available" {
@@ -1479,6 +1514,10 @@ func registerApiEndpoints(e *core.ServeEvent) {
 			return c.NotFoundError("Kniha nebyla nalezena.", nil)
 		}
 
+		if book.GetString("status") == "returned" {
+			return c.BadRequestError("Kniha byla již vrácena prodejci a nelze ji přijmout.", nil)
+		}
+
 		newAccepted := !book.GetBool("accepted")
 		if req.Accepted != nil {
 			newAccepted = *req.Accepted
@@ -1569,6 +1608,9 @@ func registerApiEndpoints(e *core.ServeEvent) {
 					return router.NewApiError(http.StatusBadRequest, fmt.Sprintf("Kniha '%s' nebyla schválena k prodeji.", b.Id), nil)
 				}
 				status := b.GetString("status")
+				if status == "returned" {
+					return router.NewApiError(http.StatusBadRequest, fmt.Sprintf("Kniha '%s' byla již vrácena prodejci a nelze ji zakoupit.", b.Id), nil)
+				}
 				if status != "available" {
 					return router.NewApiError(http.StatusConflict, fmt.Sprintf("Kniha '%s' již není dostupná (stav: %s).", b.Id, status), nil)
 				}
@@ -1649,6 +1691,9 @@ func registerApiEndpoints(e *core.ServeEvent) {
 				}
 
 				status := b.GetString("status")
+				if status == "returned" {
+					return router.NewApiError(http.StatusBadRequest, fmt.Sprintf("Kniha '%s' byla již vrácena prodejci a nelze ji zakoupit.", b.Id), nil)
+				}
 				currentBuyer := b.GetString("buyer")
 				if status != "available" && !(status == targetBookStatus && currentBuyer == buyerUser.Id) {
 					return router.NewApiError(http.StatusConflict, fmt.Sprintf("Kniha '%s' již není dostupná (stav: %s).", b.Id, status), nil)

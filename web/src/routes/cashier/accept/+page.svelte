@@ -325,8 +325,17 @@
 
 					if (cached?.type === 'book') {
 						const book: Book = cached.book;
-						const color = idToColor(book.id);
-						drawPricePolygon(ctx, match.position, `${book.price} Kč`, transform, color);
+						if (book.status === 'returned') {
+							drawPricePolygon(ctx, match.position, 'VRÁCENO', transform, {
+								bg: '#fee2e2',
+								border: '#dc2626',
+								text: '#dc2626',
+								lightBg: '#fef2f2'
+							});
+						} else {
+							const color = idToColor(book.id);
+							drawPricePolygon(ctx, match.position, `${book.price} Kč`, transform, color);
+						}
 					}
 				}
 
