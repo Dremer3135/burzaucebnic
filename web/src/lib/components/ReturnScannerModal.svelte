@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onDestroy, onMount } from 'svelte';
+	import { onDestroy, onMount, tick, untrack } from 'svelte';
 	import { pb, getBookThumbnailUrl } from '$lib/pocketbase';
 	import type { Book, BookStatus } from '$lib/types';
 	import {
@@ -38,18 +38,19 @@
 		onsuccess?: (returnedIds: string[]) => void;
 	} = $props();
 
-	// Video & canvas references
+	// Video & canvas references (isolated from effect subscriptions via untrack)
 	let videoElement = $state<HTMLVideoElement | null>(null);
 	let captureCanvas = $state<HTMLCanvasElement | null>(null);
 	let overlayCanvas = $state<HTMLCanvasElement | null>(null);
 
-	let mediaStream = $state<MediaStream | null>(null);
+	let mediaStream: MediaStream | null = null;
 	let isCameraReady = $state(false);
 	let cameraError = $state<string | null>(null);
-	let isScanningLoopActive = $state(false);
+	let isScanningLoopActive = false;
 	let isDetecting = false;
 	let lastDetectTime = 0;
 	let renderAnimId = 0;
+	let cameraSessionId = 0;
 
 	// State
 	let scannedBooks = $state<ReturnBookItem[]>([]);
@@ -85,46 +86,108 @@
 			.filter((b) => !searchQuery.trim() || b.id.toLowerCase().includes(searchQuery.trim().toLowerCase()))
 	);
 
+	let prevOpen = false;
+
 	$effect(() => {
-		if (open) {
-			scannedBooks = [];
-			suppressedBooks.clear();
-			trackedMatches.clear();
-			errorMessage = null;
-			cameraError = null;
-			isConfirmOpen = false;
-			isSearchOpen = false;
-			startCamera();
-		} else {
-			stopCamera();
-		}
+		const isOpen = open;
+		if (isOpen === prevOpen) return;
+		prevOpen = isOpen;
+
+		untrack(() => {
+			if (isOpen) {
+				handleOpenModal();
+			} else {
+				handleCloseModal();
+			}
+		});
 	});
 
 	onDestroy(() => {
 		stopCamera();
 	});
 
-	async function startCamera() {
-		stopCamera();
+	async function handleOpenModal() {
+		scannedBooks = [];
+		suppressedBooks.clear();
+		trackedMatches.clear();
+		errorMessage = null;
 		cameraError = null;
+		isConfirmOpen = false;
+		isSearchOpen = false;
+		await tick();
+		await startCamera();
+	}
+
+	function handleCloseModal() {
+		stopCamera();
+	}
+
+	async function startCamera() {
+		const sessionId = ++cameraSessionId;
+		stopCameraInternal();
+		cameraError = null;
+
 		try {
-			const stream = await navigator.mediaDevices.getUserMedia(CAMERA_CONSTRAINTS);
+			await tick();
+			let stream: MediaStream;
+			try {
+				stream = await navigator.mediaDevices.getUserMedia(CAMERA_CONSTRAINTS);
+			} catch (firstErr) {
+				console.warn('Primary camera constraints failed, attempting fallback:', firstErr);
+				try {
+					stream = await navigator.mediaDevices.getUserMedia({
+						video: { facingMode: 'environment' },
+						audio: false
+					});
+				} catch (secondErr) {
+					console.warn('Secondary camera constraints failed, attempting basic video:', secondErr);
+					stream = await navigator.mediaDevices.getUserMedia({
+						video: true,
+						audio: false
+					});
+				}
+			}
+
+			// If modal was closed or a newer session began while waiting for getUserMedia
+			if (sessionId !== cameraSessionId || !open) {
+				stream.getTracks().forEach((t) => t.stop());
+				return;
+			}
+
 			mediaStream = stream;
+
+			if (!videoElement) {
+				await tick();
+			}
+
 			if (videoElement) {
 				videoElement.srcObject = stream;
-				await videoElement.play();
+				try {
+					await videoElement.play();
+				} catch (playErr: any) {
+					if (playErr.name !== 'AbortError') {
+						throw playErr;
+					}
+				}
+
+				if (sessionId !== cameraSessionId || !open) {
+					stopCameraInternal();
+					return;
+				}
+
 				isCameraReady = true;
 				isScanningLoopActive = true;
 				runDetectionLoop();
 				runRenderLoop();
 			}
 		} catch (err: any) {
+			if (sessionId !== cameraSessionId || !open) return;
 			console.error('Failed to start return scanner camera:', err);
 			cameraError = 'Nelze přistoupit ke kameře. Zkontrolujte prosím oprávnění v prohlížeči.';
 		}
 	}
 
-	function stopCamera() {
+	function stopCameraInternal() {
 		isScanningLoopActive = false;
 		if (renderAnimId) {
 			cancelAnimationFrame(renderAnimId);
@@ -138,6 +201,11 @@
 			videoElement.srcObject = null;
 		}
 		isCameraReady = false;
+	}
+
+	function stopCamera() {
+		cameraSessionId++; // Invalidate any active or in-flight camera initialization
+		stopCameraInternal();
 	}
 
 	async function runDetectionLoop() {
