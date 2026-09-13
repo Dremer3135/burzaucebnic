@@ -20,7 +20,8 @@
 		X,
 		BookOpen,
 		Clock,
-		ExternalLink
+		ExternalLink,
+		ArrowLeft
 	} from '@lucide/svelte';
 
 	// Sellers list
@@ -139,6 +140,14 @@
 	async function selectSeller(id: string) {
 		selectedSellerId = id;
 		await loadSellerDetails(id);
+		if (typeof window !== 'undefined') {
+			setTimeout(() => {
+				const el = document.getElementById('seller-details-panel');
+				if (el) {
+					el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+				}
+			}, 50);
+		}
 	}
 
 	async function loadSellerDetails(id: string) {
@@ -151,7 +160,7 @@
 			sellerDetails = res;
 		} catch (err: any) {
 			console.error('Error loading seller details:', err);
-			showToast('Chyba při načítání detailu prodejce.', 'error');
+			showToast('Chyba při načítání detailu prodejce: ' + (err?.message || ''), 'error');
 		} finally {
 			isLoadingDetails = false;
 		}
@@ -266,7 +275,8 @@
 	}
 </script>
 
-<div class="max-w-6xl mx-auto p-3 sm:p-5 space-y-4">
+<div class="flex-1 w-full h-full flex flex-col overflow-y-auto bg-neutral-100 text-black">
+	<div class="max-w-6xl w-full mx-auto p-3 sm:p-5 space-y-4 pb-32">
 	<!-- Top Bar Actions -->
 	<div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 bg-white border-2 border-black shadow-[3px_3px_0px_0px_rgba(0,0,0,1)]">
 		<div>
@@ -321,9 +331,9 @@
 	</div>
 
 	<!-- Main Grid: Seller Search / List (Left) + Selected Seller View (Right) -->
-	<div class="grid grid-cols-1 lg:grid-cols-12 gap-4">
-		<!-- Left Column: Search & Seller List (5 cols on lg) -->
-		<div class="lg:col-span-4 space-y-3">
+	<div class="grid grid-cols-1 lg:grid-cols-12 gap-4 items-start">
+		<!-- Left Column: Search & Seller List (4 cols on lg, hidden on mobile when seller is selected) -->
+		<div class="lg:col-span-4 space-y-3 {selectedSellerId ? 'hidden lg:block' : 'block'}">
 			<div class="p-3 bg-white border-2 border-black shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] space-y-2">
 				<div class="relative">
 					<input
@@ -357,7 +367,7 @@
 			</div>
 
 			<!-- Sellers List -->
-			<div class="overflow-y-auto max-h-[calc(100vh-280px)] space-y-2 pr-1">
+			<div class="space-y-2 pr-1 lg:max-h-[calc(100vh-220px)] lg:overflow-y-auto">
 				{#if isLoadingSellers}
 					<div class="p-8 text-center bg-white border-2 border-black text-xs font-bold text-neutral-500 uppercase">
 						<RefreshCw class="w-4 h-4 animate-spin mx-auto mb-2" />
@@ -382,9 +392,14 @@
 						>
 							<div class="flex items-start justify-between gap-2">
 								<div class="min-w-0 flex-1">
-									<p class="text-xs font-black uppercase tracking-tight truncate">
-										{s.name || s.email}
-									</p>
+									<div class="flex items-center gap-1.5">
+										<p class="text-xs font-black uppercase tracking-tight truncate">
+											{s.name || s.email}
+										</p>
+										{#if isSelected && isLoadingDetails}
+											<RefreshCw class="w-3 h-3 animate-spin shrink-0 text-yellow-400" />
+										{/if}
+									</div>
 									<p class="text-[10px] font-mono truncate {isSelected ? 'text-neutral-300' : 'text-neutral-500'}">
 										{s.email}
 									</p>
@@ -435,8 +450,23 @@
 			</div>
 		</div>
 
-		<!-- Right Column: Selected Seller Details (7 cols on lg) -->
-		<div class="lg:col-span-8">
+		<!-- Right Column: Selected Seller Details (8 cols on lg, hidden on mobile when no seller is selected) -->
+		<div id="seller-details-panel" class="lg:col-span-8 {selectedSellerId ? 'block' : 'hidden lg:block'}">
+			<!-- Mobile Back Button -->
+			{#if selectedSellerId}
+				<button
+					type="button"
+					onclick={() => {
+						selectedSellerId = null;
+						sellerDetails = null;
+					}}
+					class="lg:hidden w-full mb-3 px-3 py-2.5 bg-white border-2 border-black font-black text-xs uppercase tracking-wider flex items-center gap-2 shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] hover:bg-neutral-50 active:scale-[0.99] cursor-pointer"
+				>
+					<ArrowLeft class="w-4 h-4" />
+					<span>← ZPĚT NA SEZNAM PRODEJCŮ</span>
+				</button>
+			{/if}
+
 			{#if !selectedSellerId}
 				<div class="p-12 text-center bg-white border-2 border-black shadow-[3px_3px_0px_0px_rgba(0,0,0,1)] text-neutral-400">
 					<BookOpen class="w-8 h-8 mx-auto mb-2 opacity-40" />
@@ -729,9 +759,23 @@
 						{/if}
 					</div>
 				</div>
+			{:else}
+				<div class="p-8 text-center bg-white border-2 border-red-600 shadow-[3px_3px_0px_0px_rgba(220,38,38,1)] text-red-600 space-y-3">
+					<AlertTriangle class="w-8 h-8 mx-auto" />
+					<p class="font-black text-sm uppercase">Nepodařilo se načíst detail prodejce</p>
+					<p class="text-xs text-neutral-600">Zkontrolujte připojení k serveru nebo zkuste načíst znovu.</p>
+					<button
+						type="button"
+						onclick={() => selectedSellerId && loadSellerDetails(selectedSellerId)}
+						class="px-4 py-2 bg-black text-white text-xs font-black uppercase border-2 border-black cursor-pointer hover:bg-neutral-800"
+					>
+						Zkusit znovu
+					</button>
+				</div>
 			{/if}
 		</div>
 	</div>
+</div>
 </div>
 
 <!-- Return Scanner Modal -->
