@@ -8,6 +8,7 @@
 	} from '$lib/types';
 	import { idToColor } from '$lib/scanner';
 	import ReturnScannerModal from '$lib/components/ReturnScannerModal.svelte';
+	import CashDistributionModal from '$lib/components/CashDistributionModal.svelte';
 	import {
 		Search,
 		CreditCard,
@@ -21,7 +22,8 @@
 		BookOpen,
 		Clock,
 		ExternalLink,
-		ArrowLeft
+		ArrowLeft,
+		Coins
 	} from '@lucide/svelte';
 
 	// Sellers list
@@ -45,6 +47,10 @@
 
 	let isSyncingFio = $state(false);
 	let syncResultModal = $state<FioPayoutSyncResult | null>(null);
+
+	// Cash Distribution Modal state
+	let isCashDistributionModalOpen = $state(false);
+	let cashDistributionMode = $state<'global' | 'individual'>('global');
 
 	// Feedback toast
 	let toastMessage = $state<string | null>(null);
@@ -74,6 +80,14 @@
 	);
 	let bulkXmlTotalAmount = $derived(
 		Math.round(bankSellersWithUnpaid.reduce((acc, s) => acc + s.totalUnpaid, 0) * 100) / 100
+	);
+
+	// Cash sellers statistics
+	let cashSellersWithUnpaid = $derived(
+		sellers.filter((s) => !s.payoutToBank && s.totalUnpaid > 0)
+	);
+	let cashSellersTotalAmount = $derived(
+		Math.round(cashSellersWithUnpaid.reduce((acc, s) => acc + s.totalUnpaid, 0) * 100) / 100
 	);
 
 	onMount(async () => {
@@ -289,8 +303,27 @@
 			</p>
 		</div>
 
-		<!-- Action Buttons: Bulk Fio XML & Sync -->
-		<div class="flex items-center gap-2 shrink-0">
+		<!-- Action Buttons: Bulk Fio XML, Sync & Cash Breakdown -->
+		<div class="flex flex-wrap items-center gap-2 shrink-0">
+			<!-- ROZPIS HOTOVOSTI -->
+			<button
+				type="button"
+				onclick={() => {
+					cashDistributionMode = 'global';
+					isCashDistributionModalOpen = true;
+				}}
+				class="px-3 py-2 border-2 border-black bg-white hover:bg-neutral-100 text-black font-black text-xs uppercase tracking-wider flex items-center gap-1.5 shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] active:scale-95 transition-all cursor-pointer"
+				title="Vypočítat rozpis bankovek a mincí pro výplatu prodejců v hotovosti"
+			>
+				<Coins class="w-4 h-4 text-amber-600" />
+				<span>ROZPIS HOTOVOSTI</span>
+				{#if cashSellersWithUnpaid.length > 0}
+					<span class="px-1.5 py-0.2 bg-amber-400 text-black text-[10px] font-bold">
+						{cashSellersWithUnpaid.length}
+					</span>
+				{/if}
+			</button>
+
 			<!-- FIO XML DÁVKA -->
 			<button
 				type="button"
@@ -552,6 +585,21 @@
 								<span>VYPLATIT V HOTOVOSTI ({b.totalUnpaid} KČ)</span>
 							</button>
 
+							<!-- Rozpis bankovek pro tohoto prodejce -->
+							<button
+								type="button"
+								onclick={() => {
+									cashDistributionMode = 'individual';
+									isCashDistributionModalOpen = true;
+								}}
+								disabled={b.totalUnpaid <= 0}
+								class="px-3.5 py-2.5 bg-white hover:bg-neutral-100 disabled:opacity-40 disabled:cursor-not-allowed text-black font-bold text-xs uppercase tracking-wider border-2 border-black shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] active:scale-95 transition-all flex items-center gap-1.5 cursor-pointer"
+								title="Zobrazit rozpis bankovek a mincí pro tohoto prodejce"
+							>
+								<Coins class="w-4 h-4 text-amber-600" />
+								<span>ROZPIS BANKOVEK</span>
+							</button>
+
 							<!-- Stáhnout Fio XML pro tohoto prodejce -->
 							{#if s.payoutToBank && s.iban}
 								<button
@@ -789,6 +837,18 @@
 		onsuccess={handleBooksReturnedSuccess}
 	/>
 {/if}
+
+<!-- Cash Distribution Modal (Global & Individual) -->
+<CashDistributionModal
+	bind:open={isCashDistributionModalOpen}
+	mode={cashDistributionMode}
+	sellers={sellers}
+	selectedSeller={sellerDetails ? { seller: sellerDetails.seller, balances: sellerDetails.balances } : undefined}
+	onPayCash={() => {
+		isCashDistributionModalOpen = false;
+		openCashPayoutModal();
+	}}
+/>
 
 <!-- Cash Payout Confirmation Modal (Standard or Strong Warning) -->
 {#if isCashPayoutModalOpen && sellerDetails}
